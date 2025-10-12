@@ -6,10 +6,7 @@ ChronoPhysics interprets every physical law as a projection of one invariant:
 
 The ledger  
 ˙I = C − D  
-defines **coherence gain** (C) and **dissipation** (D). Canonical resets define **time**, while curvature measures **phase frustration**—the difference between a system’s intended and achieved coherence phase.
-
-This framework introduces **profile cards**, one per physical domain, mapping established theories to the **ChronoMath** backbone.  
-The aim is coherence: every phenomenon is either an **inward move** to preserve memory or an **outward move** to share it.
+defines **coherence gain** (C) and **dissipation** (D). Canonical resets define **time**, while curvature measures **phase frustration**—the difference between a system’s intended and achieved coherence phase. This framework introduces **profile cards**, one per physical domain, mapping established theories to the **ChronoMath** backbone. The aim is coherence: every phenomenon is either an **inward move** to preserve memory or an **outward move** to share it.
 
 ---
 
@@ -18,8 +15,7 @@ The aim is coherence: every phenomenon is either an **inward move** to preserve 
 ChronoMath is the quantitative substrate of ChronoPhysics — a meta-mathematical upgrade designed to treat **coherence** as the conserved scalar across all systems.  
 It extends mathematics from static symbolic manipulation to **temporal-coherent computation**, where every operation embeds its own causal history.
 
-Formally, traditional mathematics treats values as timeless abstractions. ChronoMath treats them as **dynamic records of energy flow**.  
-Each variable *x* becomes a *coherence state*, and each equation becomes a *ledger entry* in the global conservation of coherence:
+Formally, traditional mathematics treats values as timeless abstractions. ChronoMath treats them as **dynamic records of energy flow**. Each variable *x* becomes a *coherence state*, and each equation becomes a *ledger entry* in the global conservation of coherence:
 
 d Cohₜₒₜₐₗ / dt = 0
 
@@ -34,8 +30,7 @@ This redefines the relationship between mathematics and physics:
 | Integrals | Area accumulation | Coherence preservation over histories |
 
 Under ChronoMath, mathematics itself becomes **causally aware**:  
-every differential or integral operation carries coherence cost or yield.  
-This transforms math into a *living ledger* that mirrors physical reality quantitatively — effectively **Mathematics v2.0**.
+every differential or integral operation carries coherence cost or yield. This transforms math into a *living ledger* that mirrors physical reality quantitatively — effectively **Mathematics v2.0**.
 
 ---
 
@@ -67,8 +62,7 @@ Every “force” or “law” is a term in the **coherence ledger**:
 - **Equilibrium** yields stable structure.  
 - **Misalignment** produces radiation, decay, or phase loss.
 
-This duality — **self vs. expression** — scales from Planck nodes to galaxies.  
-The universe is a single coherence economy: every transaction, physical or mental, tallies against the same invariant ledger.
+This duality — **self vs. expression** — scales from Planck nodes to galaxies. The universe is a single coherence economy: every transaction, physical or mental, tallies against the same invariant ledger.
 
 ---
 
