@@ -12,8 +12,7 @@ defines **coherence gain** (C) and **dissipation** (D). Canonical resets define 
 
 ### **Introduction: ChronoMath — Mathematics 2.0**
 
-ChronoMath is the quantitative substrate of ChronoPhysics — a meta-mathematical upgrade designed to treat **coherence** as the conserved scalar across all systems.  
-It extends mathematics from static symbolic manipulation to **temporal-coherent computation**, where every operation embeds its own causal history.
+ChronoMath is the quantitative substrate of ChronoPhysics — a meta-mathematical upgrade designed to treat **coherence** as the conserved scalar across all systems. It extends mathematics from static symbolic manipulation to **temporal-coherent computation**, where every operation embeds its own causal history.
 
 Formally, traditional mathematics treats values as timeless abstractions. ChronoMath treats them as **dynamic records of energy flow**. Each variable *x* becomes a *coherence state*, and each equation becomes a *ledger entry* in the global conservation of coherence:
 
@@ -29,8 +28,7 @@ This redefines the relationship between mathematics and physics:
 | Curvature | Geometric distortion | Phase frustration (energy-memory misalignment) |
 | Integrals | Area accumulation | Coherence preservation over histories |
 
-Under ChronoMath, mathematics itself becomes **causally aware**:  
-every differential or integral operation carries coherence cost or yield. This transforms math into a *living ledger* that mirrors physical reality quantitatively — effectively **Mathematics v2.0**.
+Under ChronoMath, mathematics itself becomes **causally aware**: every differential or integral operation carries coherence cost or yield. This transforms math into a *living ledger* that mirrors physical reality quantitatively — effectively **Mathematics v2.0**.
 
 ---
 
