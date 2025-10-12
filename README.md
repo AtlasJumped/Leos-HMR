@@ -5,7 +5,7 @@ ChronoPhysics interprets every physical law as a projection of one invariant:
 ∇ₜ,ₓ,ᴱ Cohₜₒₜₐₗ = 0  
 
 The ledger  
-˙I = C − D  
+I = C − D  
 defines **coherence gain** (C) and **dissipation** (D). Canonical resets define **time**, while curvature measures **phase frustration**—the difference between a system’s intended and achieved coherence phase. This framework introduces **profile cards**, one per physical domain, mapping established theories to the **ChronoMath** backbone. The aim is coherence: every phenomenon is either an **inward move** to preserve memory or an **outward move** to share it.
 
 ---
