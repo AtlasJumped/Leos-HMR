@@ -1,0 +1,36 @@
+{
+  "_comment": "Guardrails, not a boundary (DESIGN.md §4.4): deny rules bind Edit/Write tools only — the enforced surface is the root-owned /usr/local installs. The hook feeds watcherd's debouncer (never a direct SSE emit).",
+  "permissions": {
+    "deny": [
+      "Edit(/blazing/stack/bin/**)",
+      "Write(/blazing/stack/bin/**)",
+      "Edit(/blazing/stack/jobs/*/state.json)",
+      "Write(/blazing/stack/jobs/*/state.json)",
+      "Edit(/blazing/stack/.git/**)",
+      "Write(/blazing/stack/.git/**)",
+      "Edit(/blazing/stack/secrets/**)",
+      "Write(/blazing/stack/secrets/**)",
+      "Read(/blazing/stack/secrets/**)",
+      "Edit(/blazing/stack/.claude/settings.json)",
+      "Write(/blazing/stack/.claude/settings.json)",
+      "Edit(/blazing/stack/.mcp.json)",
+      "Write(/blazing/stack/.mcp.json)",
+      "Edit(/blazing/stack/systemd/**)",
+      "Write(/blazing/stack/systemd/**)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/blazing/stack/bin/hook-signal",
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

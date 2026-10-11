@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en" data-view="default">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mission Control</title>
+<link rel="stylesheet" href="/shell/base.css">
+<link id="persona-css" rel="stylesheet" href="/shell/persona.css">
+</head>
+<body>
+  <!-- per-persona motion layer (§5): muted video behind the grid, fx-governed -->
+  <video id="motion-bg" muted loop playsinline></video>
+
+  <nav id="viewbar" aria-label="views"></nav>
+
+  <main id="grid"><!-- panels mounted from layout.json; Claude panel pinned --></main>
+
+  <div id="statusline">
+    <span id="mode-name">—</span>
+    <span id="fx-level">fx: —</span>
+    <span id="session-warn" hidden>⚠ X11 SESSION — Wayland mechanisms degraded</span>
+  </div>
+
+<script src="/shell/shell.js"></script>
+</body>
+</html>

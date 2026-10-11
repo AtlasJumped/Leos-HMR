@@ -1,0 +1,12 @@
+{
+  "_comment": "MCP servers for the stack's Claude sessions. Secrets via env expansion only (DESIGN.md §1 boundaries): export TWENTY_API_KEY from secrets/ in the shell profile, never inline here. Twenty's MCP endpoint ships with the self-hosted server (verified).",
+  "mcpServers": {
+    "twenty": {
+      "type": "http",
+      "url": "http://127.0.0.1:3010/mcp?mode=direct",
+      "headers": {
+        "Authorization": "Bearer ${TWENTY_API_KEY}"
+      }
+    }
+  }
+}

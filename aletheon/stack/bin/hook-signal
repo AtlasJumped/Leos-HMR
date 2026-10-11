@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Claude Code PostToolUse hook (DESIGN.md §2/§5): feeds edited file paths into
+watcherd's debouncer via POST /signal. Reads the hook event JSON from stdin — the path is
+passed as JSON data, never interpolated into a shell string (injection-safe). Fails silent:
+a down watcherd must never block Claude's turn (the inotify path still covers the reload).
+"""
+import json
+import os
+import sys
+import urllib.request
+
+STACK = os.environ.get("ALETHEON_STACK", "/blazing/stack")
+EXCLUDE = ("/jobs/", "/staging/", "/secrets/", "/.git/")
+
+
+def main():
+    try:
+        event = json.load(sys.stdin)
+        path = (event.get("tool_input") or {}).get("file_path", "")
+        if not path.startswith(STACK) or any(e in path for e in EXCLUDE):
+            return
+        with open(os.path.join(STACK, "secrets", "watcherd-token")) as f:
+            token = f.read().strip()
+        req = urllib.request.Request(
+            "http://127.0.0.1:8484/signal",
+            data=json.dumps({"path": path}).encode(),
+            headers={"X-Aletheon-Token": token, "Content-Type": "application/json"},
+            method="POST")
+        urllib.request.urlopen(req, timeout=3).read()
+    except Exception:
+        pass  # deliberately silent
+
+
+if __name__ == "__main__":
+    main()

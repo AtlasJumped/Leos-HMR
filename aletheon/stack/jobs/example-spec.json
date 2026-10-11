@@ -1,0 +1,26 @@
+{
+  "id": "example-001",
+  "intent": "swap the glance theme and shell persona css for mode 'noir'",
+  "preserve": ["/tank/photos*", "jobs/*", ".claude/settings.json", ".mcp.json",
+               "secrets/*", "bin/*", "systemd/*", "docker-compose.yml"],
+  "checkpoint": { "zfs": ["blazing/stack"], "git": true },
+  "validate": [
+    ["jq", "-e", ".", "jobs/example-001/artifacts/mode.json"],
+    ["caddy", "validate", "--config", "caddy/Caddyfile"]
+  ],
+  "activate": {
+    "manifest": [
+      ["artifacts/glance-theme.yml", "glance/themes/active.yml"],
+      ["artifacts/persona.css", "shell/persona.css"],
+      ["artifacts/mode.json", "state/mode.json"]
+    ],
+    "mode": null
+  },
+  "probe": [
+    ["curl", "-sf", "--max-time", "5", "http://127.0.0.1:8080/healthz"],
+    ["bin/probe-applied-config"],
+    ["bin/probe-kiosk-pingback", "--retries", "3", "--grace", "90"],
+    ["tmux", "has-session", "-t", "claude"]
+  ],
+  "limits": { "max_attempts": 2, "max_budget_usd": 15 }
+}

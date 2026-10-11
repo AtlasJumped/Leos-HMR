@@ -1,0 +1,24 @@
+# ~/.config/systemd/user/missioncontrol-kiosk.service (installed by setup/bootstrap.sh)
+# Chrome >=140 is native Wayland automatically on a Wayland session; placement is done by
+# ONE KWin window rule matching --class=missioncontrol (force Screen=DP-2 + Fullscreen).
+# Restart=always, NOT on-failure: Ctrl+W exits 0 and must still respawn (DESIGN.md §5).
+[Unit]
+Description=Mission Control kiosk (Chrome on DP-2)
+After=plasma-kwin_wayland.service graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+ExecCondition=/bin/sh -c '[ "$XDG_SESSION_TYPE" = wayland ]'
+ExecStart=/usr/bin/google-chrome \
+  --class=missioncontrol \
+  --user-data-dir=%h/.config/aletheon-kiosk \
+  --app=http://127.0.0.1:8080 \
+  --noerrdialogs --disable-session-crashed-bubble
+Restart=always
+RestartSec=2
+StartLimitIntervalSec=60
+StartLimitBurst=5
+MemoryMax=14G
+
+[Install]
+WantedBy=graphical-session.target

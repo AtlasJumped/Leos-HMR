@@ -1,0 +1,22 @@
+#!/bin/bash
+# chrome-theme — root-owned browser accent helper (DESIGN.md §8.3).
+# Installed to /usr/local/sbin by `make install`; called via a sudoers pin:
+#   leo ALL=(root) NOPASSWD: /usr/local/sbin/chrome-theme
+# The managed-policy dir stays ROOT-OWNED: a leo-writable policy dir would allow
+# force-installed extensions (code execution in every profile). This helper validates its
+# single argument and writes exactly one policy key — nothing else is reachable through it.
+set -euo pipefail
+
+POLICY_DIR=/etc/opt/chrome/policies/managed
+POLICY_FILE="$POLICY_DIR/aletheon-mode.json"
+
+if [[ $# -ne 1 || ! "$1" =~ ^#[0-9a-fA-F]{6}$ ]]; then
+  echo "usage: chrome-theme '#rrggbb'" >&2
+  exit 1
+fi
+
+install -d -m 755 -o root -g root "$POLICY_DIR"
+printf '{\n  "BrowserThemeColor": "%s"\n}\n' "$1" > "$POLICY_FILE.tmp"
+chmod 644 "$POLICY_FILE.tmp"
+mv "$POLICY_FILE.tmp" "$POLICY_FILE"
+# Chrome on Linux file-watches this dir and re-skins running windows in seconds (verified).

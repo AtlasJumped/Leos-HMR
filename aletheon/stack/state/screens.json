@@ -1,0 +1,6 @@
+{
+  "_comment": "Wayland containments are matched by GEOMETRY ORIGIN, never index (DESIGN.md §7). Values from the verified monitor layout; re-run `kscreen-doctor -o` after any cable/EDID change and update here.",
+  "dp3": { "x": 0,    "y": 1440 },
+  "dp1": { "x": 3440, "y": 1440 },
+  "dp2": { "x": 1699, "y": 0 }
+}

@@ -1,0 +1,28 @@
+# Minimal KDE color scheme seed for the default persona. persona-create derives richer
+# schemes from imagery; hand-tune or replace with a Catppuccin flavor as desired.
+[General]
+ColorScheme=AletheonDefault
+Name=Aletheon Default
+
+[Colors:Window]
+BackgroundNormal=17,21,31
+ForegroundNormal=216,222,233
+DecorationFocus=74,163,255
+
+[Colors:View]
+BackgroundNormal=11,14,20
+ForegroundNormal=216,222,233
+
+[Colors:Selection]
+BackgroundNormal=74,163,255
+ForegroundNormal=11,14,20
+
+[Colors:Button]
+BackgroundNormal=29,36,51
+ForegroundNormal=216,222,233
+
+[WM]
+activeBackground=17,21,31
+activeForeground=216,222,233
+inactiveBackground=11,14,20
+inactiveForeground=120,130,150

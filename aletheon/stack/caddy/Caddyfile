@@ -1,0 +1,83 @@
+# Mission Control gateway (DESIGN.md §5). Caddy runs with network_mode: host — REQUIRED:
+# a bridge-mode container binding 127.0.0.1 binds its OWN loopback and cannot reach
+# host-loopback upstreams (ttyd, watcherd). Host network keeps every semantics in this file
+# literal: sites bind the HOST loopback and nothing is LAN-reachable.
+# After every edit: `caddy validate --config caddy/Caddyfile` runs in the overhaul validate
+# step; watcherd's reload rule for this path runs `docker compose exec caddy caddy reload`.
+{
+	admin 127.0.0.1:2019
+	auto_https off
+}
+
+http://127.0.0.1:8080 {
+	# ── Claude panel: ttyd under /claude, credential INJECTED here (§6) ──────────
+	# Basic-auth prompts are blocked inside iframes; ttyd itself runs -c with the same
+	# credential so a direct hit on :7681 still requires it. {env.*} come from caddy's
+	# env_file (secrets/caddy.env).
+	handle /claude* {
+		reverse_proxy 127.0.0.1:7681 {
+			header_up Authorization "Basic {env.TTYD_BASIC_B64}"
+		}
+	}
+
+	# ── watcherd: SSE + heartbeat + metrics + mutating endpoints (token-gated) ───
+	handle /events {
+		reverse_proxy 127.0.0.1:8484
+	}
+	handle /healthz {
+		reverse_proxy 127.0.0.1:8484
+	}
+	handle /heartbeat* {
+		reverse_proxy 127.0.0.1:8484
+	}
+	handle /metrics/* {
+		reverse_proxy 127.0.0.1:8484
+	}
+	handle /session {
+		reverse_proxy 127.0.0.1:8484
+	}
+	handle /signal {
+		reverse_proxy 127.0.0.1:8484
+	}
+	handle /reload/* {
+		reverse_proxy 127.0.0.1:8484
+	}
+
+	# shell JS fetches the watcherd token from this loopback-only route; custom-header
+	# requirement on mutating endpoints forces CORS preflight (kills cross-origin POSTs).
+	handle /token {
+		root * /blazing/stack/secrets
+		rewrite * /watcherd-token
+		file_server
+	}
+
+	# ── Glance (iframes cleanly; base-url /glance set in glance.yml) ─────────────
+	handle /glance* {
+		reverse_proxy 127.0.0.1:8085
+	}
+
+	# ── state + persona assets ───────────────────────────────────────────────────
+	handle_path /state/* {
+		root * /blazing/stack/state
+		file_server
+	}
+	handle_path /assets-modes/* {
+		root * /blazing/modes-assets
+		file_server
+	}
+	handle /shell/* {
+		root * /blazing/stack
+		file_server
+	}
+
+	# ── everything else: the shell page ──────────────────────────────────────────
+	handle {
+		root * /blazing/stack/shell
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# Immich stays on its own loopback port 2283 (subpath unsupported upstream; different
+# localhost ports are same-site so its session cookie works in the iframe). Twenty and n8n
+# get their own loopback ports the same way when their phases land.

@@ -1,0 +1,26 @@
+#!/bin/bash
+# probe-applied-config — verifies the services are running the config on disk, not a stale
+# one (DESIGN.md §4.3: HTTP 200 alone can pass against old state).
+#  (1) Caddy: live config (admin API) contains the gateway site marker.
+#  (2) Glance: reachable through the gateway (its fsnotify reload is server-side; the SSE
+#      path owns the iframe refresh — here we assert the server answers post-reload).
+#  (3) mode: state/mode.json names a mode whose glance theme include matches the active one.
+set -euo pipefail
+STACK="${ALETHEON_STACK:-/blazing/stack}"
+
+fail() { echo "probe-applied-config: FAIL: $*" >&2; exit 1; }
+
+curl -sf --max-time 5 http://127.0.0.1:2019/config/ | grep -q '"listen"' \
+  || fail "caddy admin API unreachable or empty config"
+
+curl -sf --max-time 5 http://127.0.0.1:8080/glance/ >/dev/null \
+  || fail "glance not answering through the gateway"
+
+if [[ -f "$STACK/state/mode.json" ]]; then
+  mode=$(python3 -c 'import json;print(json.load(open("'"$STACK"'/state/mode.json"))["mode"])')
+  src="$STACK/modes/$mode/"$(python3 -c 'import json;print(json.load(open("'"$STACK"'/modes/'"$mode"'/manifest.json"))["glance_theme"])')
+  cmp -s "$src" "$STACK/glance/themes/active.yml" \
+    || fail "active glance theme does not match mode '$mode' manifest"
+fi
+
+echo "applied-config OK"

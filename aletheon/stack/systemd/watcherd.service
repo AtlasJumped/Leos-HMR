@@ -1,0 +1,14 @@
+# ~/.config/systemd/user/watcherd.service — LINGERING user unit (DESIGN.md §5):
+# `loginctl enable-linger leo` + WantedBy=default.target (NOT graphical-session.target) so
+# watcherd and in-flight overhaul jobs survive graphical-session restarts and logouts.
+[Unit]
+Description=Mission Control watcher core (SSE + heartbeat + metrics)
+
+[Service]
+Environment=ALETHEON_STACK=/blazing/stack
+ExecStart=/blazing/stack/bin/watcherd
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

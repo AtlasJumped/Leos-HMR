@@ -1,0 +1,29 @@
+{
+  "_comment": "Named views with lazy mount/unmount; the claude panel is pinned across views (DESIGN.md §5). Editing this file IS rearranging the dash — SSE reloads the shell.",
+  "default_view": "default",
+  "views": {
+    "default": {
+      "areas": "\"machine machine claude me\" \"world world claude me\"",
+      "panels": [
+        { "id": "glance",  "title": "glance",  "src": "/glance/",            "area": "machine" },
+        { "id": "world",   "title": "world",   "src": "/glance/",            "area": "world" },
+        { "id": "claude",  "title": "claude",  "src": "/claude/",            "area": "claude" },
+        { "id": "photos",  "title": "photos",  "src": "http://127.0.0.1:2283", "area": "me" }
+      ]
+    },
+    "simlab": {
+      "areas": "\"sim sim claude\" \"sim sim claude\"",
+      "panels": [
+        { "id": "sim",    "title": "sim viewport", "src": "about:blank",     "area": "sim" },
+        { "id": "claude", "title": "claude",       "src": "/claude/",        "area": "claude" }
+      ]
+    },
+    "recruiting": {
+      "areas": "\"board board claude\" \"board board claude\"",
+      "panels": [
+        { "id": "board",  "title": "pipeline", "src": "http://127.0.0.1:3010", "area": "board" },
+        { "id": "claude", "title": "claude",   "src": "/claude/",            "area": "claude" }
+      ]
+    }
+  }
+}

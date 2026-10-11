@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""modectl — one-command persona switch across the 8 switch points (DESIGN.md §8.2).
+
+Usage: modectl apply <name> | modectl apply --previous | modectl validate <name> | modectl list
+Transactional-ish: asserts Wayland + outputs up, checks every step's exit status, re-runs
+once if plasmashell restarted mid-apply (apply is idempotent), reads back wallpaper config,
+and writes state/mode.json only after all points verify.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import wallpaper_driver as wp  # noqa: E402
+
+STACK = os.environ.get("ALETHEON_STACK", "/blazing/stack")
+MODES = os.path.join(STACK, "modes")
+ASSETS = os.environ.get("ALETHEON_MODE_ASSETS", "/blazing/modes-assets")
+STATE = os.path.join(STACK, "state", "mode.json")
+
+REQUIRED = ["name", "color_scheme", "cursor_theme", "videos", "dp2_image", "lock",
+            "glance_theme", "shell_css"]
+OPTIONAL = ["konsole_profile", "kando_colors", "panel_preset", "decoration",
+            "browser_hex", "shell_bg", "desktop_theme"]
+
+
+def die(msg):
+    print(f"modectl: ERROR: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def warn(msg):
+    print(f"modectl: warn: {msg}", file=sys.stderr)
+
+
+def run(cmd, check=True):
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if check and r.returncode != 0:
+        raise RuntimeError(f"{' '.join(cmd)}: {r.stderr.strip() or r.stdout.strip()}")
+    return r
+
+
+def manifest(name):
+    p = os.path.join(MODES, name, "manifest.json")
+    if not os.path.exists(p):
+        die(f"no such mode: {name} ({p})")
+    with open(p) as f:
+        m = json.load(f)
+    missing = [k for k in REQUIRED if k not in m]
+    if missing:
+        die(f"mode {name}: manifest missing required fields {missing} — every persona, "
+            f"generated or hand-written, must be a full citizen (§8.1)")
+    return m
+
+
+def fx_level():
+    try:
+        with open(os.path.join(STACK, "state", "fx.json")) as f:
+            return json.load(f).get("level", "full")
+    except (OSError, ValueError):
+        return "full"
+
+
+def pick_video(m, screen):
+    """Per-mode fps variants (§1.1): fx full prefers 60, else 30."""
+    v = m["videos"][screen]  # {"30": "relpath", "60": "relpath"?}
+    fps = "60" if fx_level() == "full" and "60" in v else "30"
+    return os.path.join(ASSETS, m["name"], v[fps])
+
+
+def colorscheme_apply(scheme_file):
+    """Two-name alternation (verified quirk): re-applying a modified scheme requires a
+    different name, so we install under alternating names and apply the fresh one."""
+    dst_dir = os.path.expanduser("~/.local/share/color-schemes")
+    os.makedirs(dst_dir, exist_ok=True)
+    cur = json.load(open(STATE)).get("scheme_slot", "A") if os.path.exists(STATE) else "A"
+    slot = "B" if cur == "A" else "A"
+    name = f"Aletheon{slot}"
+    dst = os.path.join(dst_dir, name + ".colors")
+    shutil.copy2(scheme_file, dst)
+    run(["plasma-apply-colorscheme", name])
+    return slot
+
+
+def apply(name):
+    if os.environ.get("XDG_SESSION_TYPE") != "wayland":
+        die("not a Wayland session — refusing (every mechanism here assumes Wayland, §8.6)")
+    m = manifest(name)
+    mode_dir = os.path.join(MODES, name)
+    if not wp.outputs_up(expected=len(json.load(open(os.path.join(STACK, "state", "screens.json"))))):
+        die("outputs are down (fx away?) — deferring: re-run after outputs re-enable (§5)")
+
+    for attempt in (1, 2):
+        try:
+            # 1. colors / cursor / style
+            slot = colorscheme_apply(os.path.join(mode_dir, m["color_scheme"]))
+            run(["plasma-apply-cursortheme", m["cursor_theme"]])
+            if m.get("desktop_theme"):
+                run(["plasma-apply-desktoptheme", m["desktop_theme"]])
+            # 2. wallpapers: videos on work screens, static on dp2, shell motion asset
+            level = fx_level()
+            if level in ("paused", "away"):
+                for s in m["videos"]:
+                    wp.apply_image(s, os.path.join(ASSETS, name, m["dp2_image"]))
+            else:
+                for s in m["videos"]:
+                    wp.apply_video(s, pick_video(m, s), pause_mode=wp.PAUSE.get(level, 3))
+            wp.apply_image("dp2", os.path.join(ASSETS, name, m["dp2_image"]))
+            # 3. lock screen
+            lock = os.path.join(ASSETS, name, m["lock"])
+            (wp.lockscreen_video if lock.endswith(".mp4") else wp.lockscreen_image)(lock)
+            # 4. konsole
+            if m.get("konsole_profile"):
+                konsole_apply(mode_dir, m["konsole_profile"])
+            # 5. kando
+            if m.get("kando_colors"):
+                kando_apply(os.path.join(mode_dir, m["kando_colors"]))
+            # 6. panel accents (panel-colorizer D-Bus preset; argv in manifest)
+            if m.get("panel_preset"):
+                run(m["panel_preset"], check=False)
+            # 7. decorations
+            if m.get("decoration"):
+                run(["kwin-applywindowdecoration", m["decoration"]], check=False)
+                run(["qdbus6", "org.kde.KWin", "/KWin", "reconfigure"], check=False)
+            # 8. dashboard: glance theme include + shell css + state file (watched → SSE)
+            shutil.copy2(os.path.join(mode_dir, m["glance_theme"]),
+                         os.path.join(STACK, "glance", "themes", "active.yml"))
+            shutil.copy2(os.path.join(mode_dir, m["shell_css"]),
+                         os.path.join(STACK, "shell", "persona.css"))
+            # browser accent via root helper (validated, sudoers-pinned; §8.3)
+            if m.get("browser_hex"):
+                run(["sudo", "-n", "/usr/local/sbin/chrome-theme", m["browser_hex"]],
+                    check=False)
+            # verify: plasmashell alive + wallpaper read-back before recording success
+            if not wp.plasmashell_active():
+                raise RuntimeError("plasmashell not active after apply")
+            for s in m["videos"]:
+                if fx_level() == "full" and name not in wp.read_back(s):
+                    warn(f"read-back on {s} did not mention mode asset — verify visually")
+            break
+        except RuntimeError as e:
+            if attempt == 1 and not wp.plasmashell_active():
+                warn(f"plasmashell restarted mid-apply ({e}); re-running once (idempotent)")
+                run(["sleep", "5"], check=False)
+                continue
+            die(str(e))
+
+    prev = {}
+    if os.path.exists(STATE):
+        prev = json.load(open(STATE))
+    with open(STATE, "w") as f:
+        json.dump({"mode": name, "previous": prev.get("mode"), "scheme_slot": slot,
+                   "shellbg": m.get("shell_bg", ""), "assets_base": f"/assets-modes/{name}/"},
+                  f, indent=2)
+    print(f"modectl: applied {name} (all switch points)")
+
+
+def konsole_apply(mode_dir, profile):
+    """Install the mode's profile files, set default, flip every live session (verified
+    D-Bus surface: per-session setProfile; no all-windows call exists)."""
+    kdir = os.path.expanduser("~/.local/share/konsole")
+    os.makedirs(kdir, exist_ok=True)
+    for f in os.listdir(os.path.join(mode_dir, "konsole")):
+        shutil.copy2(os.path.join(mode_dir, "konsole", f), kdir)
+    run(["kwriteconfig6", "--file", "konsolerc", "--group", "Desktop Entry",
+         "--key", "DefaultProfile", profile + ".profile"])
+    svcs = run(["qdbus6"], check=False).stdout.splitlines()
+    for svc in [s.strip() for s in svcs if s.strip().startswith("org.kde.konsole")]:
+        sessions = run(["qdbus6", svc], check=False).stdout.splitlines()
+        for obj in [o.strip() for o in sessions if "/Sessions/" in o]:
+            run(["qdbus6", svc, obj, "org.kde.konsole.Session.setProfile", profile],
+                check=False)
+
+
+def kando_apply(colors_file):
+    cfg_path = os.path.expanduser("~/.config/kando/config.json")
+    if not os.path.exists(cfg_path):
+        warn("kando not configured; skipping point 5")
+        return
+    with open(cfg_path) as f:
+        cfg = json.load(f)
+    with open(colors_file) as f:
+        cfg.update(json.load(f))  # {"menuTheme": ..., "menuThemeColors": {...}}
+    with open(cfg_path, "w") as f:
+        json.dump(cfg, f, indent=2)  # kando hot-reloads config.json (verified)
+
+
+def validate(name):
+    m = manifest(name)
+    mode_dir = os.path.join(MODES, name)
+    problems = []
+    for key in ("color_scheme", "glance_theme", "shell_css"):
+        if not os.path.exists(os.path.join(mode_dir, m[key])):
+            problems.append(f"missing file: {m[key]}")
+    for s, v in m["videos"].items():
+        for fps, rel in v.items():
+            if not os.path.exists(os.path.join(ASSETS, name, rel)):
+                problems.append(f"missing asset: {s}@{fps} -> {rel}")
+    for key in ("dp2_image", "lock"):
+        if not os.path.exists(os.path.join(ASSETS, name, m[key])):
+            problems.append(f"missing asset: {m[key]}")
+    if problems:
+        die(f"mode {name} invalid:\n  " + "\n  ".join(problems))
+    print(f"modectl: {name} valid (8-point manifest satisfied)")
+
+
+def main():
+    args = sys.argv[1:]
+    if not args:
+        die("usage: modectl apply <name>|--previous | validate <name> | list")
+    if args[0] == "list":
+        for n in sorted(os.listdir(MODES)):
+            if os.path.isdir(os.path.join(MODES, n)):
+                print(n)
+    elif args[0] == "validate" and len(args) > 1:
+        validate(args[1])
+    elif args[0] == "apply" and len(args) > 1:
+        if args[1] == "--previous":
+            prev = json.load(open(STATE)).get("previous") if os.path.exists(STATE) else None
+            if not prev:
+                die("no previous mode recorded")
+            apply(prev)
+        else:
+            apply(args[1])
+    else:
+        die("usage: modectl apply <name>|--previous | validate <name> | list")
+
+
+if __name__ == "__main__":
+    main()

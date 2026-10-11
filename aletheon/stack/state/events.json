@@ -1,0 +1,7 @@
+{
+  "_comment": "event -> action rules consumed by watcherd (DESIGN.md §5/§13). TTS and future automations live HERE (Claude-editable), never inside the daemon. 'tts' is the speech argv prefix; rules match panel+action from SSE events; {panel} interpolates.",
+  "tts": ["spd-say", "--"],
+  "on": [
+    { "panel": "sim", "action": "reload", "say": "simulation update on the dashboard" }
+  ]
+}

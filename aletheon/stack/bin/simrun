@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""simrun — prompt-driven sim launcher (DESIGN.md §10). v1 = no daemon.
+
+Template enforcement is SERVER-SIDE here: only names registered in sim/registry.json run —
+never caller-supplied paths. Sims are pinned to GPU1 by UUID and launched as transient user
+units (survive the launching session). Viewer/SDK version match is derived at launch.
+
+Usage: simrun list | run <template> [params.json] | stop <unit> | ps | cleanup
+"""
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import time
+
+STACK = os.environ.get("ALETHEON_STACK", "/blazing/stack")
+RUNS = os.environ.get("ALETHEON_SIMRUNS", "/scratch/simruns")
+REG = os.path.join(STACK, "sim", "registry.json")
+CONDA_ENV = "newton"
+
+
+def die(msg):
+    print(f"simrun: ERROR: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def registry():
+    with open(REG) as f:
+        return json.load(f)
+
+
+def gpu1_uuid():
+    p = os.path.join(STACK, "state", "gpu.json")  # written by preflight.sh
+    try:
+        return json.load(open(p))["compute_uuid"]
+    except (OSError, ValueError, KeyError):
+        die(f"{p} missing compute_uuid — run bin/preflight.sh first")
+
+
+def free_port(start=9876):
+    for port in range(start, start + 50):
+        with socket.socket() as s:
+            if s.connect_ex(("127.0.0.1", port)) != 0:
+                return port
+    die("no free port")
+
+
+def rerun_viewer_port():
+    return free_port(9090)
+
+
+def run(template, params_file=None):
+    reg = registry()
+    if template not in reg:
+        die(f"unregistered template {template!r} — only vetted entries in sim/registry.json "
+            f"run (freeform sim code is not accepted here by design, §10)")
+    entry = reg[template]
+    unit = f"sim-{int(time.time())}"
+    rundir = os.path.join(RUNS, unit)
+    os.makedirs(rundir, exist_ok=True)
+    grpc, web = free_port(9876), rerun_viewer_port()
+
+    if entry["kind"] == "newton-example":
+        inner = ["python", "-m", "newton.examples", entry["target"],
+                 "--viewer", "rerun"]
+    elif entry["kind"] == "template":
+        tfile = os.path.join(STACK, "sim", "templates", os.path.basename(entry["file"]))
+        if not os.path.exists(tfile):
+            die(f"template file missing: {tfile}")
+        inner = ["python", tfile, "--grpc-port", str(grpc), "--web-port", str(web)]
+        if params_file:
+            params = validate_params(entry, params_file)
+            pfile = os.path.join(rundir, "params.json")
+            with open(pfile, "w") as f:
+                json.dump(params, f)
+            inner += ["--params", pfile]
+    else:
+        die(f"unknown kind {entry['kind']!r}")
+
+    cmd = ["systemd-run", "--user", "--unit", unit, "--collect",
+           "-p", f"Environment=CUDA_VISIBLE_DEVICES={gpu1_uuid()}",
+           "-p", f"Environment=SIMRUN_DIR={rundir}",
+           "-p", f"StandardOutput=append:{rundir}/stdout.log",
+           "-p", f"StandardError=append:{rundir}/stderr.log",
+           "conda", "run", "--no-capture-output", "-n", CONDA_ENV] + inner
+    subprocess.run(cmd, check=True)
+    meta = {"unit": unit, "template": template, "grpc": grpc, "web": web,
+            "rundir": rundir, "viewer_url": f"http://127.0.0.1:{web}"}
+    with open(os.path.join(rundir, "meta.json"), "w") as f:
+        json.dump(meta, f, indent=2)
+    with open(os.path.join(STACK, "state", "sim.json"), "w") as f:
+        json.dump(meta, f, indent=2)   # watched → SSE → sim panel points at viewer_url
+    print(json.dumps(meta))
+
+
+def validate_params(entry, params_file):
+    """Schema-validated params: only keys the registry declares, with type+range checks."""
+    with open(params_file) as f:
+        params = json.load(f)
+    schema = entry.get("params", {})
+    clean = {}
+    for key, spec in schema.items():
+        if key not in params:
+            clean[key] = spec["default"]
+            continue
+        v = params[key]
+        if spec["type"] == "number":
+            v = float(v)
+            if not spec["min"] <= v <= spec["max"]:
+                die(f"param {key}={v} outside [{spec['min']}, {spec['max']}]")
+        elif spec["type"] == "enum":
+            if v not in spec["values"]:
+                die(f"param {key}={v!r} not in {spec['values']}")
+        else:
+            die(f"registry declares unsupported param type {spec['type']!r}")
+        clean[key] = v
+    extra = set(params) - set(schema)
+    if extra:
+        die(f"unknown params rejected: {sorted(extra)}")
+    return clean
+
+
+def ps():
+    subprocess.run(["systemctl", "--user", "list-units", "sim-*", "--no-legend"],
+                   check=False)
+
+
+def stop(unit):
+    if not re.fullmatch(r"sim-\d+", unit):
+        die("unit must look like sim-<ts>")
+    subprocess.run(["systemctl", "--user", "stop", unit], check=False)
+
+
+def cleanup():
+    """Kill orphaned CUDA processes on the compute GPU not owned by a live sim-* unit —
+    zombie VRAM is the #1 flake source (§10)."""
+    uuid = gpu1_uuid()
+    out = subprocess.run(
+        ["nvidia-smi", "--query-compute-apps=pid,gpu_uuid", "--format=csv,noheader"],
+        capture_output=True, text=True).stdout
+    live = subprocess.run(["systemctl", "--user", "list-units", "sim-*", "--no-legend"],
+                          capture_output=True, text=True).stdout
+    for line in out.strip().splitlines():
+        pid, gpu = [x.strip() for x in line.split(",")]
+        if gpu != uuid:
+            continue
+        cg = subprocess.run(["ps", "-o", "unit=", "-p", pid],
+                            capture_output=True, text=True).stdout.strip()
+        if cg.startswith("sim-") and cg.split(".")[0] in live:
+            continue
+        print(f"simrun: killing orphaned CUDA pid {pid} (unit {cg or 'none'})")
+        subprocess.run(["kill", "-9", pid], check=False)
+
+
+def main():
+    a = sys.argv[1:]
+    if not a:
+        die("usage: simrun list|run <template> [params.json]|stop <unit>|ps|cleanup")
+    if a[0] == "list":
+        print(json.dumps(registry(), indent=2))
+    elif a[0] == "run" and len(a) >= 2:
+        run(a[1], a[2] if len(a) > 2 else None)
+    elif a[0] == "stop" and len(a) == 2:
+        stop(a[1])
+    elif a[0] == "ps":
+        ps()
+    elif a[0] == "cleanup":
+        cleanup()
+    else:
+        die("usage: simrun list|run <template> [params.json]|stop <unit>|ps|cleanup")
+
+
+if __name__ == "__main__":
+    main()

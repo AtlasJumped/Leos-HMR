@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+"""overhaulctl — deterministic overhaul-job runner (DESIGN.md §4).
+
+Claude writes the spec and the staged files; this runner executes and judges.
+Subcommands: new | run | checkpoint | validate | activate | probe | rollback | resume | status
+Install: promoted root-owned to /usr/local/bin by `make install` (§4.4); the repo copy is
+the source of truth that root re-installs deliberately.
+"""
+import fcntl
+import fnmatch
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+STACK = os.environ.get("ALETHEON_STACK", "/blazing/stack")
+JOBS = os.path.join(STACK, "jobs")
+REPORT_SPILL = os.environ.get("ALETHEON_REPORT_SPILL", "/scratch/overhaul-reports")
+LOCKFILE = os.path.join(JOBS, ".running.lock")
+PAUSE_FLAG = os.path.join(JOBS, ".pause")
+
+
+def sh(cmd, cwd=STACK, check=True, capture=False):
+    """Run argv list (never a shell string) and return CompletedProcess."""
+    return subprocess.run(
+        cmd, cwd=cwd, check=check,
+        stdout=subprocess.PIPE if capture else None,
+        stderr=subprocess.STDOUT if capture else None, text=True)
+
+
+def job_dir(jid):
+    d = os.path.join(JOBS, jid)
+    if not os.path.isdir(d):
+        die(f"no such job: {jid}")
+    return d
+
+
+def die(msg, code=1):
+    print(f"overhaulctl: ERROR: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def load(path, default=None):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        if default is not None:
+            return default
+        raise
+
+
+def save_state(jid, st):
+    # Write-ahead journal: always flushed+fsynced before the action it records.
+    p = os.path.join(job_dir(jid), "state.json")
+    tmp = p + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(st, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, p)
+
+
+def state(jid):
+    return load(os.path.join(job_dir(jid), "state.json"),
+                {"phase": "new", "attempts": 0})
+
+
+def spec(jid):
+    s = load(os.path.join(job_dir(jid), "spec.json"))
+    for k in ("id", "intent", "preserve", "checkpoint", "validate", "activate", "probe"):
+        if k not in s:
+            die(f"spec.json missing required key: {k}")
+    if s["id"] != jid:
+        die(f"spec id {s['id']!r} != job dir {jid!r}")
+    return s
+
+
+def log(jid, msg):
+    line = f"[{time.strftime('%F %T')}] {msg}"
+    print(line)
+    with open(os.path.join(job_dir(jid), "log", "runner.log"), "a") as f:
+        f.write(line + "\n")
+
+
+def git_head():
+    return sh(["git", "rev-parse", "HEAD"], capture=True).stdout.strip()
+
+
+def watch_map():
+    return load(os.path.join(STACK, "state", "watch-map.json"), {"rules": []})
+
+
+def reload_actions_for(paths):
+    """Longest-prefix match each changed live path against watch-map rules;
+    return ordered, deduped reload argv lists."""
+    rules = sorted(watch_map()["rules"], key=lambda r: -len(r["prefix"]))
+    seen, actions = set(), []
+    for p in paths:
+        ap = p if os.path.isabs(p) else os.path.join(STACK, p)
+        for r in rules:
+            if ap.startswith(os.path.join(STACK, r["prefix"])):
+                for cmd in r.get("reload", []):
+                    key = json.dumps(cmd)
+                    if key not in seen:
+                        seen.add(key)
+                        actions.append(cmd)
+                break
+    return actions
+
+
+def check_preserve(s):
+    pats = s.get("preserve", [])
+    for _, dst in s["activate"]["manifest"]:
+        for pat in pats:
+            if fnmatch.fnmatch(dst, pat) or fnmatch.fnmatch("/" + dst, pat):
+                die(f"spec touches preserved path {dst!r} (pattern {pat!r}); refusing")
+
+
+# ── phases ───────────────────────────────────────────────────────────────────
+
+def do_checkpoint(jid):
+    s, st = spec(jid), state(jid)
+    check_preserve(s)
+    if s["checkpoint"].get("git", True):
+        sh(["git", "add", "-A"])
+        # gitleaks runs as a pre-commit hook; a leak aborts the commit and the job.
+        r = sh(["git", "commit", "--allow-empty", "-m", f"overhaul {jid}: checkpoint"],
+               check=False, capture=True)
+        if r.returncode != 0 and "nothing to commit" not in r.stdout:
+            die(f"checkpoint commit failed:\n{r.stdout}")
+    for ds in s["checkpoint"].get("zfs", []):
+        snap = f"{ds}@overhaul-{jid}-{int(time.time())}"
+        # Requires delegated perms: zfs allow -u leo snapshot,clone,mount,hold <ds>  [TEST]
+        sh(["zfs", "snapshot", snap])
+        st.setdefault("snapshots", []).append(snap)
+        log(jid, f"snapshot {snap}")
+    st["phase"] = "checkpointed"
+    st["pre_head"] = git_head()
+    save_state(jid, st)
+    log(jid, f"checkpoint done at {st['pre_head']}")
+
+
+def do_validate(jid):
+    s, st = spec(jid), state(jid)
+    for cmd in s["validate"]:
+        log(jid, f"validate: {' '.join(cmd)}")
+        r = sh(cmd, check=False, capture=True)
+        with open(os.path.join(job_dir(jid), "log", "validate.log"), "a") as f:
+            f.write(f"$ {' '.join(cmd)}\n{r.stdout}\n")
+        if r.returncode != 0:
+            st["phase"] = "validate_failed"
+            save_state(jid, st)
+            die(f"validate failed: {' '.join(cmd)}\n{r.stdout}")
+    st["phase"] = "validated"
+    save_state(jid, st)
+    log(jid, "validate: all green")
+
+
+def do_activate(jid):
+    s, st = spec(jid), state(jid)
+    check_preserve(s)
+    if st.get("phase") not in ("validated", "activating"):
+        die(f"activate requires validated state (have {st.get('phase')}) — run validate first")
+    # Journal-first (§4.3): record intent BEFORE touching live paths.
+    st["phase"] = "activating"
+    st.setdefault("pre_head", git_head())
+    save_state(jid, st)
+    changed = []
+    for src, dst in s["activate"]["manifest"]:
+        src_abs = os.path.join(job_dir(jid), src) if not os.path.isabs(src) else src
+        dst_abs = os.path.join(STACK, dst)
+        if not os.path.exists(src_abs):
+            die(f"staged file missing: {src_abs}")
+        os.makedirs(os.path.dirname(dst_abs), exist_ok=True)
+        shutil.copy2(src_abs, dst_abs)
+        changed.append(dst)
+    sh(["git", "add", "-A"])
+    r = sh(["git", "commit", "-m", f"overhaul {jid}: activate"], check=False, capture=True)
+    if r.returncode == 0:
+        st["activation_commit"] = git_head()
+    elif "nothing to commit" in r.stdout:
+        st["activation_commit"] = None  # no-op activation
+    else:
+        die(f"activation commit failed:\n{r.stdout}")
+    st["changed"] = changed
+    save_state(jid, st)
+    for cmd in reload_actions_for(changed):
+        log(jid, f"reload: {' '.join(cmd)}")
+        sh(cmd, check=False)
+    if s["activate"].get("mode"):
+        sh([os.path.join(STACK, "bin", "modectl"), "apply", s["activate"]["mode"]], check=False)
+    signal_watcherd(changed)
+    st["phase"] = "activated"
+    save_state(jid, st)
+    log(jid, f"activated ({len(changed)} files), commit {st.get('activation_commit')}")
+
+
+def do_probe(jid):
+    s, st = spec(jid), state(jid)
+    for cmd in s["probe"]:
+        if wait_if_paused(jid):
+            log(jid, "paused by powerguard; probe suspended")
+        log(jid, f"probe: {' '.join(cmd)}")
+        r = sh(cmd, check=False, capture=True)
+        with open(os.path.join(job_dir(jid), "log", "probe.log"), "a") as f:
+            f.write(f"$ {' '.join(cmd)}\n{r.stdout}\n")
+        if r.returncode != 0:
+            # tmux-only failure: restart the tmux unit and re-probe once (§4.3)
+            if "has-session" in " ".join(cmd) and not st.get("tmux_retried"):
+                st["tmux_retried"] = True
+                save_state(jid, st)
+                sh(["systemctl", "--user", "restart", "claude-tmux.service"], check=False)
+                time.sleep(3)
+                return do_probe(jid)
+            st["phase"] = "probe_failed"
+            save_state(jid, st)
+            log(jid, f"probe FAILED: {' '.join(cmd)}")
+            do_rollback(jid, auto=True)
+            return False
+    st["phase"] = "done"
+    save_state(jid, st)
+    log(jid, "probe: all green — job done")
+    return True
+
+
+def do_rollback(jid, auto=False):
+    """The ONE revert routine (§4.3): git undo → reload actions → previous mode →
+    kiosk restart → re-probe pingback."""
+    s, st = spec(jid), state(jid)
+    if st.get("activation_commit"):
+        sh(["git", "revert", "--no-edit", st["activation_commit"]], check=False)
+    elif st.get("pre_head"):
+        # Crash before the activation commit: the tree IS the repo — hard reset is the undo.
+        sh(["git", "reset", "--hard", st["pre_head"]])
+        sh(["git", "clean", "-fd", "--", "shell", "glance", "caddy", "state", "modes"],
+           check=False)
+    for cmd in reload_actions_for(st.get("changed", [])):
+        sh(cmd, check=False)
+    sh([os.path.join(STACK, "bin", "modectl"), "apply", "--previous"], check=False)
+    sh(["systemctl", "--user", "restart", "missioncontrol-kiosk.service"], check=False)
+    ping = sh([os.path.join(STACK, "bin", "probe-kiosk-pingback"),
+               "--retries", "3", "--grace", "90"], check=False, capture=True)
+    st["phase"] = "rolled_back"
+    st["rollback_pingback"] = ping.returncode == 0
+    save_state(jid, st)
+    spill_report(jid)
+    msg = f"rolled back ({'auto' if auto else 'manual'}); kiosk pingback " \
+          f"{'OK' if ping.returncode == 0 else 'FAILED — check DP-2 / tmux from a Konsole'}"
+    log(jid, msg)
+    if auto:
+        die(f"job {jid}: {msg}", code=2)
+
+
+def spill_report(jid):
+    """Copy state + logs outside the snapshotted dataset before any manual zfs
+    rollback can destroy the record of why it was needed (§4.1)."""
+    dst = os.path.join(REPORT_SPILL, jid)
+    try:
+        os.makedirs(dst, exist_ok=True)
+        for name in ("state.json", "spec.json"):
+            shutil.copy2(os.path.join(job_dir(jid), name), dst)
+        shutil.copytree(os.path.join(job_dir(jid), "log"), os.path.join(dst, "log"),
+                        dirs_exist_ok=True)
+    except OSError as e:
+        print(f"overhaulctl: warn: report spill failed: {e}", file=sys.stderr)
+
+
+def signal_watcherd(paths):
+    token = read_token()
+    for p in paths:
+        subprocess.run(
+            ["curl", "-sf", "-X", "POST", "http://127.0.0.1:8484/signal",
+             "-H", f"X-Aletheon-Token: {token}", "-H", "Content-Type: application/json",
+             "--data-binary", json.dumps({"path": os.path.join(STACK, p)})],
+            check=False, stdout=subprocess.DEVNULL)
+
+
+def read_token():
+    try:
+        with open(os.path.join(STACK, "secrets", "watcherd-token")) as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
+def wait_if_paused(jid, limit=600):
+    """powerguard touches jobs/.pause on battery (§3.5); hold at task boundary."""
+    waited = False
+    t0 = time.time()
+    while os.path.exists(PAUSE_FLAG) and time.time() - t0 < limit:
+        waited = True
+        time.sleep(5)
+    return waited
+
+
+def do_run(jid):
+    s, st = spec(jid), state(jid)
+    limits = s.get("limits", {})
+    if st["attempts"] >= limits.get("max_attempts", 2):
+        die(f"attempt limit reached ({st['attempts']}); stopping with report, not looping")
+    st["attempts"] += 1
+    save_state(jid, st)
+    with open(LOCKFILE, "w") as lk:  # recycle-timer guard (§5) checks this lock
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        do_checkpoint(jid)
+        wait_if_paused(jid)
+        do_validate(jid)
+        wait_if_paused(jid)
+        do_activate(jid)
+        ok = do_probe(jid)
+    sys.exit(0 if ok else 2)
+
+
+def do_resume(jid):
+    st = state(jid)
+    phase = st.get("phase")
+    log(jid, f"resume from phase={phase}")
+    if phase == "activating":
+        # Mechanical recovery rule (§4.3): journal says started, commit absent → reset, redo.
+        if not st.get("activation_commit") and st.get("pre_head"):
+            sh(["git", "reset", "--hard", st["pre_head"]])
+        st["phase"] = "validated"
+        save_state(jid, st)
+        do_activate(jid)
+        do_probe(jid)
+    elif phase in ("new", "checkpointed", "validate_failed"):
+        do_run(jid)
+    elif phase == "validated":
+        do_activate(jid)
+        do_probe(jid)
+    elif phase == "activated":
+        do_probe(jid)
+    elif phase in ("done", "rolled_back"):
+        log(jid, "nothing to resume")
+    else:
+        die(f"unknown phase {phase!r}")
+
+
+def do_new(jid):
+    d = os.path.join(JOBS, jid)
+    if os.path.exists(d):
+        die(f"job {jid} already exists")
+    for sub in ("log", "artifacts"):
+        os.makedirs(os.path.join(d, sub))
+    example = os.path.join(JOBS, "example-spec.json")
+    if os.path.exists(example):
+        shutil.copy2(example, os.path.join(d, "spec.json"))
+    with open(os.path.join(d, "state.json"), "w") as f:
+        json.dump({"phase": "new", "attempts": 0}, f, indent=2)
+    print(f"created {d} — edit spec.json, stage files under artifacts/, then: overhaulctl run {jid}")
+
+
+def main():
+    if len(sys.argv) < 2:
+        die("usage: overhaulctl new|run|checkpoint|validate|activate|probe|rollback|resume|status <job-id>")
+    cmd = sys.argv[1]
+    if cmd == "status":
+        for jid in sorted(os.listdir(JOBS)):
+            if os.path.isdir(os.path.join(JOBS, jid)) and not jid.startswith("."):
+                print(jid, state(jid).get("phase"))
+        return
+    if len(sys.argv) < 3:
+        die(f"{cmd} needs a job id")
+    jid = sys.argv[2]
+    {"new": do_new, "run": do_run, "checkpoint": do_checkpoint, "validate": do_validate,
+     "activate": do_activate, "probe": do_probe, "resume": do_resume,
+     "rollback": lambda j: do_rollback(j, auto=False)}.get(cmd, lambda _: die(f"unknown command {cmd!r}"))(jid)
+
+
+if __name__ == "__main__":
+    main()

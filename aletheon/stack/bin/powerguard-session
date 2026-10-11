@@ -1,0 +1,23 @@
+#!/bin/bash
+# powerguard-session — leo half of UPS load-shedding (DESIGN.md §3.5). Runs as a lingering
+# user unit; watches the root half's flag and does the session-side shed: fx paused,
+# SIGSTOP sim units, pause signal to any running overhaul job.
+set -euo pipefail
+
+STACK="${ALETHEON_STACK:-/blazing/stack}"
+FLAG=/run/aletheon/onbattery
+
+mkdir -p /run/aletheon 2>/dev/null || true
+while true; do
+  if [[ -e "$FLAG" ]]; then
+    "$STACK/bin/fx" paused || true
+    systemctl --user kill --signal=SIGSTOP 'sim-*' 2>/dev/null || true
+    touch "$STACK/jobs/.pause"            # overhaulctl holds at the next task boundary
+    # wait for power to return
+    while [[ -e "$FLAG" ]]; do sleep 5; done
+    rm -f "$STACK/jobs/.pause"
+    systemctl --user kill --signal=SIGCONT 'sim-*' 2>/dev/null || true
+    "$STACK/bin/fx" full || true
+  fi
+  inotifywait -q -e create,delete /run/aletheon >/dev/null 2>&1 || sleep 10
+done

@@ -1,0 +1,8 @@
+# ~/.config/systemd/user/kiosk-recycle.service — oneshot invoked by kiosk-recycle.timer.
+[Unit]
+Description=Nightly kiosk recycle (guarded)
+
+[Service]
+Type=oneshot
+Environment=ALETHEON_STACK=/blazing/stack
+ExecStart=/blazing/stack/bin/kiosk-recycle-check

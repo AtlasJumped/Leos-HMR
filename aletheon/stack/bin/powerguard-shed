@@ -1,0 +1,37 @@
+#!/bin/bash
+# powerguard-shed — ROOT half of UPS load-shedding (DESIGN.md §3.5).
+# Installed to /usr/local/sbin by `make install`; invoked by NUT (upssched/NOTIFYCMD) as
+# root. Root never executes repo-resident code: this is the promoted copy.
+#   powerguard-shed onbatt   — immediate shed: GPU power caps + flag for the session half
+#   powerguard-shed online   — restore
+#   powerguard-shed lowbatt  — graceful shutdown: stop containers, sync pools, poweroff
+set -euo pipefail
+
+FLAGDIR=/run/aletheon
+GPU_CAP_W=150          # drops dual-5090 draw under the CyberPower 1500's ~1000W ceiling
+GPU_DEFAULT_W=600
+
+mkdir -p "$FLAGDIR"
+case "${1:-}" in
+  onbatt)
+    nvidia-smi -pl "$GPU_CAP_W" || true
+    touch "$FLAGDIR/onbattery"            # session half (leo) reacts: fx paused, SIGSTOP sims
+    logger -t powerguard "on battery: GPUs capped to ${GPU_CAP_W}W, flag set"
+    ;;
+  online)
+    nvidia-smi -pl "$GPU_DEFAULT_W" || true
+    rm -f "$FLAGDIR/onbattery"
+    logger -t powerguard "online: GPU caps restored"
+    ;;
+  lowbatt)
+    logger -t powerguard "low battery: graceful shutdown"
+    touch "$FLAGDIR/onbattery"
+    docker stop $(docker ps -q) 2>/dev/null || true
+    zpool sync || true
+    systemctl poweroff
+    ;;
+  *)
+    echo "usage: powerguard-shed onbatt|online|lowbatt" >&2
+    exit 1
+    ;;
+esac

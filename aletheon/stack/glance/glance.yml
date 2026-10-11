@@ -1,0 +1,62 @@
+# Glance config (DESIGN.md §5/§8.2 point 8). Glance hot-reloads this file AND the
+# $include'd theme on save (fsnotify, server-side); the kiosk iframe refresh comes from
+# watcherd's SSE — glance events carry an extra delay so the reparse lands first.
+server:
+  base-url: /glance
+
+theme:
+  $include: themes/active.yml
+
+pages:
+  - name: Machine
+    columns:
+      - size: small
+        widgets:
+          - type: custom-api
+            title: GPUs
+            url: http://127.0.0.1:8484/metrics/gpu
+            cache: 10s
+            template: |
+              {{ range .JSON.Array "gpus" }}
+              <div class="flex justify-between">
+                <span>GPU{{ .Int "index" }} {{ .String "pstate" }}</span>
+                <span>{{ .String "util" }}% · dec {{ .String "dec" }}% ·
+                      {{ .String "mem_used" }}/{{ .String "mem_total" }} MiB ·
+                      {{ .String "temp" }}°C · {{ .String "power" }} W</span>
+              </div>
+              {{ end }}
+          - type: server-stats
+            servers:
+              - type: local
+                name: aletheon
+
+      - size: full
+        widgets:
+          - type: group
+            widgets:
+              - type: hacker-news
+              - type: rss
+                title: KDE / Plasma
+                feeds:
+                  - url: https://pointieststick.com/feed/
+          - type: reddit
+            subreddit: LocalLLaMA
+
+      - size: small
+        widgets:
+          - type: clock
+            hour-format: 24h
+          - type: custom-api
+            title: Mode
+            url: http://127.0.0.1:8085/assets/state/mode.json
+            cache: 10s
+            template: |
+              <div>persona: <b>{{ .JSON.String "mode" }}</b></div>
+          - type: bookmarks
+            groups:
+              - title: Panels
+                links:
+                  - title: Photos (Immich)
+                    url: http://127.0.0.1:2283
+                  - title: Pipeline (Twenty)
+                    url: http://127.0.0.1:3010

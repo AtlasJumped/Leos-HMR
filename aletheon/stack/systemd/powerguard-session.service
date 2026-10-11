@@ -1,0 +1,12 @@
+# ~/.config/systemd/user/powerguard-session.service — leo half of UPS shedding (§3.5).
+[Unit]
+Description=powerguard session half (fx + sim SIGSTOP on battery)
+
+[Service]
+Environment=ALETHEON_STACK=/blazing/stack
+ExecStart=/blazing/stack/bin/powerguard-session
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

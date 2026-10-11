@@ -1,0 +1,32 @@
+#!/bin/bash
+# kiosk-recycle-check — nightly kiosk recycle with two guards (DESIGN.md §5):
+# skip if the Claude tmux pane was active in the last 10 minutes, OR if any overhaul job
+# is running (the probe wave's pingback must not race a restart).
+set -euo pipefail
+STACK="${ALETHEON_STACK:-/blazing/stack}"
+
+# guard 1: running overhaul job (overhaulctl holds this lock during run)
+if [[ -e "$STACK/jobs/.running.lock" ]] && ! flock -n "$STACK/jobs/.running.lock" true; then
+  echo "recycle skipped: overhaul job running"
+  exit 0
+fi
+for st in "$STACK"/jobs/*/state.json; do
+  [[ -e "$st" ]] || continue
+  phase=$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("phase",""))' "$st")
+  case "$phase" in checkpointed|validated|activating|activated)
+    echo "recycle skipped: job $(dirname "$st") in phase $phase"; exit 0 ;;
+  esac
+done
+
+# guard 2: recent tmux activity in the claude session
+if tmux has-session -t claude 2>/dev/null; then
+  last=$(tmux display -p -t claude '#{window_activity}')
+  now=$(date +%s)
+  if (( now - last < 600 )); then
+    echo "recycle skipped: claude pane active $((now-last))s ago"
+    exit 0
+  fi
+fi
+
+systemctl --user restart missioncontrol-kiosk.service
+echo "kiosk recycled"

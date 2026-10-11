@@ -1,0 +1,20 @@
+{
+  "name": "default",
+  "color_scheme": "colors/aletheon-default.colors",
+  "cursor_theme": "breeze_cursors",
+  "desktop_theme": "default",
+  "videos": {
+    "dp1": { "30": "videos/dp1-30.mp4" },
+    "dp3": { "30": "videos/dp3-30.mp4" }
+  },
+  "dp2_image": "stills/dp2.png",
+  "lock": "stills/lock.png",
+  "glance_theme": "glance-theme.yml",
+  "shell_css": "shell.css",
+  "shell_bg": "",
+  "konsole_profile": null,
+  "kando_colors": null,
+  "panel_preset": null,
+  "decoration": null,
+  "browser_hex": "#4aa3ff"
+}

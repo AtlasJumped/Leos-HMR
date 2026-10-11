@@ -1,0 +1,25 @@
+{
+  "_comment": "path-prefix -> panel routing + reload actions (DESIGN.md §5). Claude edits THIS file to wire new panels; watcherd core stays frozen. Longest prefix wins. extra_delay: glance's server-side fsnotify reparse must land before the iframe reloads. JSON (not YAML) so `jq -e .` is the whole lint.",
+  "rules": [
+    { "prefix": "glance/", "panel": "glance", "extra_delay": 1.0,
+      "reload": [] },
+    { "prefix": "caddy/Caddyfile", "panel": "shell", "sse_action": "none",
+      "reload": [["docker", "compose", "-f", "/blazing/stack/docker-compose.yml", "exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"]] },
+    { "prefix": "shell/persona.css", "panel": "shell-css",
+      "reload": [] },
+    { "prefix": "shell/", "panel": "shell",
+      "reload": [] },
+    { "prefix": "state/mode.json", "panel": "state",
+      "reload": [] },
+    { "prefix": "state/fx.json", "panel": "state",
+      "reload": [] },
+    { "prefix": "state/sim.json", "panel": "sim",
+      "reload": [] },
+    { "prefix": "state/layout.json", "panel": "shell",
+      "reload": [] },
+    { "prefix": "modes/", "panel": "state",
+      "reload": [] },
+    { "prefix": "docker-compose.yml", "panel": "shell", "sse_action": "none",
+      "reload": [["docker", "compose", "-f", "/blazing/stack/docker-compose.yml", "up", "-d", "--remove-orphans"]] }
+  ]
+}

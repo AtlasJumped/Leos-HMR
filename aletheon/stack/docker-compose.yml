@@ -1,0 +1,131 @@
+# Mission Control compose (DESIGN.md §2/§5/§15).
+# Invariants:
+#  - every published port carries an explicit 127.0.0.1: prefix (belt) AND
+#    /etc/docker/daemon.json sets "ip": "127.0.0.1" (braces) — nothing is LAN-reachable.
+#  - caddy runs network_mode: host (see caddy/Caddyfile header for why).
+#  - immich volumes/env are preserve-protected (contracts/immich.md): the library's
+#    in-container path /mnt/photos is FROZEN; host moves are edits here only.
+# Profiles: core (always), photos (immich), recruiter (twenty+n8n, later phase).
+
+name: aletheon
+
+services:
+  caddy:
+    image: caddy:2.10.0
+    network_mode: host            # REQUIRED — loopback sites + host-loopback upstreams
+    restart: unless-stopped
+    env_file: secrets/caddy.env   # TTYD_BASIC_B64
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /blazing/stack:/blazing/stack:ro
+      - /blazing/modes-assets:/blazing/modes-assets:ro
+      - caddy-data:/data
+    profiles: [core]
+
+  glance:
+    image: glanceapp/glance:v0.8.6
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8085:8080"
+    volumes:
+      - ./glance:/app/config:ro            # glance.yml + themes/ ($include hot-reloads)
+      - ./state:/app/assets/state:ro       # mode.js reads /assets/state/mode.json
+    profiles: [core]
+
+  # ── Immich (profile: photos). Pin tags; sync service shape with the upstream compose at
+  #    install time per contracts/immich.md — but keep OUR port prefixes and volume paths. ──
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:v3.3.1
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:2283:2283"
+    environment:
+      DB_HOSTNAME: immich-postgres
+      DB_USERNAME: immich
+      DB_PASSWORD: ${IMMICH_DB_PASSWORD}
+      DB_DATABASE_NAME: immich
+      REDIS_HOSTNAME: immich-redis
+    volumes:
+      - /blazing/generated/immich-upload:/usr/src/app/upload
+      - /tank/photos:/mnt/photos:ro        # FROZEN in-container path (contracts/immich.md)
+    depends_on: [immich-postgres, immich-redis]
+    profiles: [photos]
+
+  immich-ml:
+    image: ghcr.io/immich-app/immich-machine-learning:v3.3.1-cuda
+    restart: unless-stopped
+    environment:
+      MACHINE_LEARNING_MODEL_REVISION: v2
+    volumes:
+      - immich-model-cache:/cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]            # GPU1 = compute (DESIGN.md §14)
+              capabilities: [gpu]
+    profiles: [photos]
+
+  immich-postgres:
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.3.0
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: immich
+      POSTGRES_PASSWORD: ${IMMICH_DB_PASSWORD}
+      POSTGRES_DB: immich
+    volumes:
+      - /blazing/generated/immich-pg:/var/lib/postgresql/data
+    profiles: [photos]
+
+  immich-redis:
+    image: valkey/valkey:8
+    restart: unless-stopped
+    profiles: [photos]
+
+  # ── Recruiter phase (profile: recruiter) — enable at phase 11a/11b. Tags pinned at
+  #    enable-time; shapes synced from upstream with loopback ports kept. ──
+  twenty:
+    image: twentycrm/twenty:v2.45.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3010:3000"
+    environment:
+      SERVER_URL: http://127.0.0.1:3010
+      PG_DATABASE_URL: postgres://twenty:${TWENTY_DB_PASSWORD}@twenty-postgres:5432/twenty
+      REDIS_URL: redis://twenty-redis:6379
+      APP_SECRET: ${TWENTY_APP_SECRET}
+    depends_on: [twenty-postgres, twenty-redis]
+    profiles: [recruiter]
+
+  twenty-postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: twenty
+      POSTGRES_PASSWORD: ${TWENTY_DB_PASSWORD}
+      POSTGRES_DB: twenty
+    volumes:
+      - /blazing/generated/twenty-pg:/var/lib/postgresql/data
+    profiles: [recruiter]
+
+  twenty-redis:
+    image: redis:7
+    restart: unless-stopped
+    profiles: [recruiter]
+
+  n8n:
+    image: n8nio/n8n:1.112.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}   # guards the Gmail OAuth refresh token
+      N8N_SECURE_COOKIE: "false"                  # loopback-only HTTP
+    volumes:
+      - /blazing/generated/n8n:/home/node/.n8n
+    profiles: [recruiter]
+
+volumes:
+  caddy-data:
+  immich-model-cache:

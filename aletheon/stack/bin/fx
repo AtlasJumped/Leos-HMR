@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""fx — the background-effects dial (DESIGN.md §7). Levels: full | low | paused | away.
+
+full   = 60fps video variants where they exist, never pause, shell motion on
+low    = 30fps variants, pause-on-maximized, shell motion off
+paused = all wallpaper video stopped (static images), shell motion off
+away   = paused + work outputs disabled (callers provide hysteresis; manual fx away is
+         immediate). `fx back` re-enables outputs and restores the prior level.
+"""
+import json
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import wallpaper_driver as wp  # noqa: E402
+
+STACK = os.environ.get("ALETHEON_STACK", "/blazing/stack")
+FX = os.path.join(STACK, "state", "fx.json")
+LEVELS = ("full", "low", "paused", "away")
+
+
+def state():
+    try:
+        with open(FX) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {"level": "full", "before_away": "full"}
+
+
+def write(st):
+    with open(FX, "w") as f:
+        json.dump(st, f, indent=2)
+
+
+def outputs(enable):
+    for out in ("DP-1", "DP-3"):
+        op = "enable" if enable else "disable"
+        subprocess.run(["kscreen-doctor", f"output.{out}.{op}"], check=False)
+
+
+def reapply_mode():
+    subprocess.run([os.path.join(STACK, "bin", "modectl"), "apply",
+                    current_mode()], check=False)
+
+
+def current_mode():
+    try:
+        with open(os.path.join(STACK, "state", "mode.json")) as f:
+            return json.load(f)["mode"]
+    except (OSError, ValueError, KeyError):
+        return "default"
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1] not in LEVELS + ("back", "status"):
+        print("usage: fx full|low|paused|away|back|status", file=sys.stderr)
+        sys.exit(1)
+    arg = sys.argv[1]
+    st = state()
+    if arg == "status":
+        print(json.dumps(st))
+        return
+    if arg == "back":
+        outputs(True)
+        st["level"] = st.get("before_away", "full")
+        write(st)
+        reapply_mode()  # outputs are back up; wallpaper writes are safe again
+        print(f"fx: restored {st['level']}")
+        return
+    if arg == "away":
+        st["before_away"] = st["level"] if st["level"] != "away" else st.get("before_away", "full")
+        st["level"] = "away"
+        write(st)       # write BEFORE disabling outputs so modectl sees the level
+        outputs(False)
+        print("fx: away (work outputs off, video stopped)")
+        return
+    st["level"] = arg
+    write(st)
+    if wp.outputs_up(expected=3):
+        reapply_mode()  # modectl picks fps/pause/static from fx.json
+    print(f"fx: {arg}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,16 @@
+{
+  "_comment": "Server-side template enum (DESIGN.md §10): simrun refuses anything not listed here. 'newton-example' entries run newton's own shipped examples with --viewer rerun (the v1 path, no custom code). 'template' entries are vetted local scenes with a declared param schema — simrun validates params against it. [TEST] example names against the installed newton release before the phase-9 gate.",
+  "pendulum": { "kind": "newton-example", "target": "basic_pendulum" },
+  "cloth":    { "kind": "newton-example", "target": "cloth_bending" },
+  "granular": { "kind": "newton-example", "target": "mpm_granular" },
+  "bodies": {
+    "kind": "template",
+    "file": "falling_bodies.py",
+    "params": {
+      "count":   { "type": "number", "min": 1,   "max": 500,  "default": 50 },
+      "size":    { "type": "number", "min": 0.05, "max": 2.0, "default": 0.25 },
+      "seconds": { "type": "number", "min": 1,   "max": 120,  "default": 15 },
+      "shape":   { "type": "enum", "values": ["box", "sphere"], "default": "box" }
+    }
+  }
+}

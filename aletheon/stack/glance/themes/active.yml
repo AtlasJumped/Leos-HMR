@@ -1,0 +1,6 @@
+# REPLACED by `modectl apply <mode>` from modes/<mode>/glance-theme.yml. Default persona:
+background-color: 222 26 8
+primary-color: 212 100 64
+positive-color: 145 60 50
+negative-color: 0 70 60
+contrast-multiplier: 1.1

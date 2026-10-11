@@ -1,0 +1,31 @@
+#!/bin/bash
+# probe-kiosk-pingback — passes iff the kiosk shell posted a heartbeat recently.
+# Retries with grace so a kiosk restart mid-probe reads as "late heartbeat", not failure
+# (DESIGN.md §4.3). Usage: probe-kiosk-pingback [--retries N] [--grace SECONDS]
+set -euo pipefail
+
+RETRIES=3
+GRACE=90
+MAX_AGE=45     # a heartbeat older than this means the shell is not alive
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --retries) RETRIES="$2"; shift 2 ;;
+    --grace)   GRACE="$2"; shift 2 ;;
+    *) echo "usage: $0 [--retries N] [--grace SECONDS]" >&2; exit 2 ;;
+  esac
+done
+
+SLEEP=$(( GRACE / RETRIES ))
+for (( i=1; i<=RETRIES; i++ )); do
+  age=$(curl -sf --max-time 5 http://127.0.0.1:8484/heartbeat/last \
+        | python3 -c 'import json,sys; a=json.load(sys.stdin)["age_seconds"]; print(int(a) if a is not None else 10**9)' \
+        2>/dev/null || echo 1000000000)
+  if [[ "$age" -le "$MAX_AGE" ]]; then
+    echo "kiosk pingback OK (age ${age}s)"
+    exit 0
+  fi
+  [[ $i -lt $RETRIES ]] && sleep "$SLEEP"
+done
+echo "kiosk pingback FAILED after ${RETRIES} attempts over ${GRACE}s" >&2
+exit 1

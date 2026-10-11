@@ -1,0 +1,6 @@
+secrets/*
+!secrets/README.md
+jobs/*/log/
+jobs/*/artifacts/
+__pycache__/
+*.pyc

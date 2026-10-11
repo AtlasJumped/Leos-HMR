@@ -1,0 +1,17 @@
+# ~/.config/systemd/user/claude-tmux.service — supervised tmux holding the Claude session
+# (DESIGN.md §6). RemainAfterExit: tmux daemonizes; the unit restarts it if the server dies.
+# Attach from elsewhere with grouped sessions: `tmux new-session -t claude` (keeps the dash
+# panel's size); .tmux.conf needs: setw -g aggressive-resize on ; set -g history-limit 50000
+[Unit]
+Description=Claude Code tmux session
+
+[Service]
+Type=forking
+ExecStart=/usr/bin/tmux new-session -d -s claude '/usr/bin/env claude --continue'
+ExecStop=/usr/bin/tmux kill-session -t claude
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
