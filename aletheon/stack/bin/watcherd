@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
 """watcherd — frozen-scope core daemon (DESIGN.md §5).
 
-Scope (deny-listed, deliberately small): inotify → per-panel debounce → SSE; POST /signal
-(Claude-hook inlet into the SAME debouncer); POST /reload/<panel>; kiosk heartbeat;
-read-only GPU/session metrics for dashboard tiles. ALL routing/behavior comes from
+Scope (deny-listed, deliberately small): inotify → per-panel debounce → run the matched
+rule's reload actions → SSE; POST /signal (Claude-hook inlet into the SAME debouncer);
+kiosk heartbeat; read-only GPU/session metrics. ALL routing/behavior comes from
 Claude-editable data files: state/watch-map.json, state/events.json.
 Runs as a lingering user unit (survives graphical-session restarts).
+
+Hardening (review findings): Host-header pinning (DNS rebinding reaches 127.0.0.1:8484
+same-origin), constant-time token compare with per-request re-read, auth before body read +
+Content-Length cap, SSE client cap + sentinel close, sse_action "none" suppressed, reload
+argv lists actually executed.
 """
+import hmac
 import json
 import os
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -17,25 +24,26 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 STACK = os.environ.get("ALETHEON_STACK", "/blazing/stack")
 BIND = ("127.0.0.1", 8484)
+ALLOWED_HOSTS = {"127.0.0.1:8484", "localhost:8484"}
 EXCLUDE = (os.path.join(STACK, "jobs"), os.path.join(STACK, "staging"),
            os.path.join(STACK, "secrets"), os.path.join(STACK, ".git"))
+MAX_BODY = 65536
+MAX_SSE_CLIENTS = 32
 
 clients_lock = threading.Lock()
-clients = []            # list[queue.Queue] — one per SSE subscriber
+clients = []            # list[queue.Queue] — one per SSE subscriber; None = close sentinel
 pending_lock = threading.Lock()
-pending = {}            # panel -> threading.Timer
+pending = {}            # panel -> (threading.Timer, rule)
 last_heartbeat = {"ts": 0.0}
 
 
-def token():
+def read_token():
+    """Re-read per request so a token provisioned/rotated after start works (review)."""
     try:
         with open(os.path.join(STACK, "secrets", "watcherd-token")) as f:
             return f.read().strip()
-    except FileNotFoundError:
+    except OSError:
         return None
-
-
-TOKEN = token()
 
 
 def rules():
@@ -65,6 +73,10 @@ def broadcast(panel, action):
                 dead.append(q)
         for q in dead:
             clients.remove(q)
+            try:
+                q.put_nowait(None)  # sentinel: tell the handler thread to close (review)
+            except queue.Full:
+                pass
     run_event_actions(panel, action)
 
 
@@ -76,15 +88,15 @@ def run_event_actions(panel, action):
         if rule.get("panel") in (panel, "*") and rule.get("action") in (action, "*"):
             argv = list(rule.get("exec", []))
             if rule.get("say"):
-                say = cfg.get("tts", ["spd-say"])  # default speech-dispatcher; piper via cfg
+                say = cfg.get("tts", ["spd-say", "--"])
                 argv = say + [rule["say"].replace("{panel}", panel)]
             if argv:
                 subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def schedule(path):
-    """Debounce per panel; Glance gets an extra delay so its own fsnotify reparse
-    lands before the iframe reloads (verified ordering requirement)."""
+    """Debounce per panel, carrying the matched RULE so fire() can run its reload actions.
+    Glance rules carry extra_delay so its server-side fsnotify reparse lands first."""
     ap = os.path.realpath(path)
     if any(ap.startswith(e) for e in EXCLUDE):
         return
@@ -92,19 +104,32 @@ def schedule(path):
         if ap.startswith(os.path.join(STACK, r["prefix"])):
             panel = r["panel"]
             delay = 1.5 + float(r.get("extra_delay", 0))
-            action = r.get("sse_action", "reload")
             with pending_lock:
                 if panel in pending:
-                    pending[panel].cancel()
-                t = threading.Timer(delay, lambda p=panel, a=action: fire(p, a))
-                pending[panel] = t
+                    pending[panel][0].cancel()
+                t = threading.Timer(delay, lambda rr=r: fire(rr))
+                pending[panel] = (t, r)
                 t.start()
             return
 
 
-def fire(panel, action):
+def fire(rule):
+    panel = rule["panel"]
     with pending_lock:
         pending.pop(panel, None)
+    # Execute the rule's reload actions (caddy reload, compose up, ...) BEFORE any SSE —
+    # the browser must never refresh against a service still on the old config (review).
+    for argv in rule.get("reload", []):
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=120)
+            if r.returncode != 0:
+                print(f"watcherd: reload failed ({' '.join(argv)}): "
+                      f"{(r.stdout or '') + (r.stderr or '')}".strip()[:500])
+        except (OSError, subprocess.TimeoutExpired) as e:
+            print(f"watcherd: reload error ({argv[0]}): {e}")
+    action = rule.get("sse_action", "reload")
+    if action == "none":
+        return
     broadcast(panel, action)
 
 
@@ -144,6 +169,7 @@ def gpu_metrics():
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    timeout = 30
 
     def log_message(self, *a):  # quiet
         pass
@@ -156,16 +182,26 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _host_ok(self):
+        if self.headers.get("Host") in ALLOWED_HOSTS:
+            return True
+        self._json({"error": "bad host"}, 403)
+        return False
+
     def _authed(self):
-        if TOKEN is None:
+        token = read_token()
+        if token is None:
             self._json({"error": "no token provisioned; mutating endpoints disabled"}, 503)
             return False
-        if self.headers.get("X-Aletheon-Token") != TOKEN:
+        got = self.headers.get("X-Aletheon-Token", "")
+        if not hmac.compare_digest(got, token):
             self._json({"error": "forbidden"}, 403)
             return False
         return True
 
     def do_GET(self):
+        if not self._host_ok():
+            return
         if self.path == "/healthz":
             self._json({"ok": True})
         elif self.path == "/metrics/gpu":
@@ -176,17 +212,22 @@ class Handler(BaseHTTPRequestHandler):
             age = time.time() - last_heartbeat["ts"] if last_heartbeat["ts"] else None
             self._json({"age_seconds": age})
         elif self.path == "/events":
+            with clients_lock:
+                if len(clients) >= MAX_SSE_CLIENTS:
+                    self._json({"error": "too many subscribers"}, 503)
+                    return
+                q = queue.Queue(maxsize=64)
+                clients.append(q)
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
             self.end_headers()
-            q = queue.Queue(maxsize=64)
-            with clients_lock:
-                clients.append(q)
             try:
                 while True:
                     try:
                         msg = q.get(timeout=25)
+                        if msg is None:   # close sentinel from broadcast()
+                            break
                         self.wfile.write(f"data: {msg}\n\n".encode())
                     except queue.Empty:
                         self.wfile.write(b": keepalive\n\n")
@@ -201,15 +242,23 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
     def do_POST(self):
-        n = int(self.headers.get("Content-Length", 0) or 0)
+        if not self._host_ok():
+            return
+        # auth BEFORE reading any body; cap body size (review: pre-auth buffering DoS)
+        if not self._authed():
+            return
+        try:
+            n = int(self.headers.get("Content-Length", 0) or 0)
+        except ValueError:
+            n = -1
+        if n < 0 or n > MAX_BODY:
+            self._json({"error": "bad length"}, 413)
+            return
         raw = self.rfile.read(n) if n else b"{}"
         if self.path == "/heartbeat":
             last_heartbeat["ts"] = time.time()
             self._json({"ok": True})
-            return
-        if not self._authed():
-            return
-        if self.path == "/signal":
+        elif self.path == "/signal":
             try:
                 path = json.loads(raw).get("path", "")
             except ValueError:
@@ -219,7 +268,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True})
         elif self.path.startswith("/reload/"):
             panel = self.path.split("/reload/", 1)[1].strip("/")
-            if panel and all(c.isalnum() or c in "-_" for c in panel):
+            if panel and re.fullmatch(r"[A-Za-z0-9_-]{1,64}", panel):
                 broadcast(panel, "reload")
                 self._json({"ok": True})
             else:
@@ -231,8 +280,9 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     threading.Thread(target=inotify_loop, daemon=True).start()
     srv = ThreadingHTTPServer(BIND, Handler)
+    srv.daemon_threads = True
     print(f"watcherd on {BIND[0]}:{BIND[1]}, stack={STACK}, "
-          f"token={'set' if TOKEN else 'MISSING (mutating endpoints disabled)'}")
+          f"token={'set' if read_token() else 'MISSING (mutating endpoints disabled)'}")
     srv.serve_forever()
 
 

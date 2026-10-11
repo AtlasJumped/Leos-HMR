@@ -27,8 +27,10 @@ async function boot() {
   buildViewbar();
   mountView(localStorage.getItem("mc-view") || layout.default_view || "default");
   refreshModeState();
+  refreshSimPanel();
   connectSSE();
   setInterval(heartbeat, 20000); heartbeat();
+  setInterval(gpuStrip, 10000); gpuStrip();
   checkSession();
   guardKeys();
   watchClaude();
@@ -95,18 +97,34 @@ function connectSSE() {
   es.onerror = () => { es.close(); setTimeout(connectSSE, 3000); };
 }
 
+let intentionalReload = false;
+function reloadShell() { intentionalReload = true; location.reload(); }
+
 function handleEvent(panel, action) {
+  if (action === "none") return;          // watch-map's suppression escape hatch (review)
   if (panel === "shell-css") {            // swap stylesheet with cache-buster — no reload
     const link = document.getElementById("persona-css");
     link.href = "/shell/persona.css?ts=" + Date.now();
     refreshModeState();
     return;
   }
-  if (panel === "shell") { location.reload(); return; }   // shell page itself changed
+  if (panel === "shell") { reloadShell(); return; }       // shell page itself changed
   if (panel === "state") { refreshModeState(); return; }
   if (panel === "claude") return;         // NEVER reload the Claude panel from SSE (§2)
+  if (panel === "sim") { refreshSimPanel(); return; }     // consumer end of §10 (review)
   const f = mounted.get(panel);
   if (f && action === "reload") f.src = f.src.split("#")[0];
+}
+
+async function refreshSimPanel() {
+  const f = mounted.get("sim");
+  if (!f) return;
+  try {
+    const meta = await j("/state/sim.json");
+    const url = meta.viewer_url || "about:blank";
+    if (!/^http:\/\/127\.0\.0\.1:\d+/.test(url) && url !== "about:blank") return;
+    if (f.src !== url) f.src = url;
+  } catch { f.src = "about:blank"; }
 }
 
 async function refreshModeState() {
@@ -129,7 +147,23 @@ async function refreshModeState() {
 }
 
 async function heartbeat() {
-  try { await fetch("/heartbeat", { method: "POST" }); } catch {}
+  // token-gated (review: an open heartbeat is CSRF-able and would let any local page fake
+  // kiosk liveness, suppressing the §4.3 recovery path)
+  try {
+    await fetch("/heartbeat", { method: "POST",
+      headers: { "X-Aletheon-Token": token } });
+  } catch {}
+}
+
+async function gpuStrip() {
+  // GPU telemetry lives here (same-origin via the gateway), NOT in Glance — a bridge-mode
+  // container cannot reach host-loopback watcherd (review).
+  try {
+    const m = await j("/metrics/gpu");
+    document.getElementById("gpu-strip").textContent = (m.gpus || []).map(g =>
+      `GPU${g.index} ${g.pstate} ${g.util}% dec${g.dec}% ${g.mem_used}/${g.mem_total}MiB ` +
+      `${g.temp}°C ${g.power}W`).join("  ·  ") || "gpu: —";
+  } catch {}
 }
 
 async function checkSession() {
@@ -150,7 +184,11 @@ function guardKeys() {
       e.stopPropagation();
     }
   }, true);
-  window.addEventListener("beforeunload", (e) => { e.preventDefault(); });
+  // Block only UNINTENDED navigation: preventDefault here pops Chrome's leave dialog,
+  // which must never fire for our own programmatic reloads (review).
+  window.addEventListener("beforeunload", (e) => {
+    if (!intentionalReload) e.preventDefault();
+  });
 }
 
 function watchClaude() {

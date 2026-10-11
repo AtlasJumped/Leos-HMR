@@ -89,7 +89,7 @@ def apply(name):
         die("not a Wayland session — refusing (every mechanism here assumes Wayland, §8.6)")
     m = manifest(name)
     mode_dir = os.path.join(MODES, name)
-    if not wp.outputs_up(expected=len(json.load(open(os.path.join(STACK, "state", "screens.json"))))):
+    if not wp.outputs_up():   # expected derives from wp.screens(), _comment keys stripped
         die("outputs are down (fx away?) — deferring: re-run after outputs re-enable (§5)")
 
     for attempt in (1, 2):

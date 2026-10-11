@@ -17,9 +17,10 @@ note "DRM by-path entries: $cards (verify visually: all 3 DP on GPU0; re-cable i
 # CLI sweep
 for c in qdbus6 kwriteconfig6 kpackagetool6 plasma-apply-colorscheme \
          plasma-apply-cursortheme kwin-applywindowdecoration kscreen-doctor \
-         ffmpeg inotifywait ttyd tmux jq git curl sanoid; do
+         ffmpeg inotifywait ttyd tmux jq git curl sanoid gitleaks upsc; do
   command -v "$c" >/dev/null || fail "missing CLI: $c"
 done
+docker compose version >/dev/null 2>&1 || fail "docker compose v2 missing"
 
 # ffmpeg hardware surface
 ffmpeg -hide_banner -encoders 2>/dev/null | grep -q nvenc || fail "ffmpeg lacks nvenc encoders"

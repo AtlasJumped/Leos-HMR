@@ -65,17 +65,22 @@ loginctl enable-linger "$USER_NAME"
 # ── 5. secrets (never in git) ─────────────────────────────────────────────────
 SEC="$STACK/secrets"
 install -d -m 700 -o "$USER_NAME" "$SEC"
-gen() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$1"; }
+# SIGPIPE-proof generator: bounded read, NO downstream pipe-closer (a trailing `head -c`
+# would kill tr with SIGPIPE under pipefail — review-verified failure, exit 141).
+gen() { local s; s=$(head -c 512 /dev/urandom | base64 -w0 | tr -dc 'A-Za-z0-9'); printf '%s' "${s:0:$1}"; }
+# each file under its OWN guard so partial runs self-heal
 if [[ ! -f "$SEC/watcherd-token" ]]; then gen 48 > "$SEC/watcherd-token"; fi
 if [[ ! -f "$SEC/ttyd.env" ]]; then
-  pass=$(gen 32)
-  printf 'TTYD_CREDENTIAL=leo:%s\n' "$pass" > "$SEC/ttyd.env"
-  printf 'TTYD_BASIC_B64=%s\n' "$(printf 'leo:%s' "$pass" | base64 -w0)" > "$SEC/caddy.env"
+  printf 'TTYD_CREDENTIAL=leo:%s\n' "$(gen 32)" > "$SEC/ttyd.env"
+fi
+if [[ ! -f "$SEC/caddy.env" ]]; then
+  cred=$(grep -oP '(?<=TTYD_CREDENTIAL=).*' "$SEC/ttyd.env")
+  printf 'TTYD_BASIC_B64=%s\n' "$(printf '%s' "$cred" | base64 -w0)" > "$SEC/caddy.env"
 fi
 if [[ ! -f "$SEC/compose.env" ]]; then
   printf 'IMMICH_DB_PASSWORD=%s\nTWENTY_DB_PASSWORD=%s\nTWENTY_APP_SECRET=%s\nN8N_ENCRYPTION_KEY=%s\n' \
     "$(gen 24)" "$(gen 24)" "$(gen 32)" "$(gen 32)" > "$SEC/compose.env"
-  say "compose secrets generated → point compose at it: docker compose --env-file secrets/compose.env"
+  say "compose secrets generated → ALWAYS invoke compose with: --env-file secrets/compose.env"
 fi
 chmod 600 "$SEC"/* ; chown "$USER_NAME": "$SEC"/*
 

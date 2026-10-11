@@ -6,12 +6,16 @@
 Description=Claude Code tmux session
 
 [Service]
+# Type=forking tracks the daemonized tmux server as main PID; NO RemainAfterExit (it would
+# leave the unit 'active (exited)' after the server dies, so nothing respawns — review) and
+# Restart=always (a clean tmux exit must respawn too, same rationale as the kiosk unit).
 Type=forking
 ExecStart=/usr/bin/tmux new-session -d -s claude '/usr/bin/env claude --continue'
 ExecStop=/usr/bin/tmux kill-session -t claude
-RemainAfterExit=yes
-Restart=on-failure
+Restart=always
 RestartSec=3
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Install]
 WantedBy=default.target

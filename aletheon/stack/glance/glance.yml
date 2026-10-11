@@ -1,8 +1,12 @@
 # Glance config (DESIGN.md §5/§8.2 point 8). Glance hot-reloads this file AND the
 # $include'd theme on save (fsnotify, server-side); the kiosk iframe refresh comes from
 # watcherd's SSE — glance events carry an extra delay so the reparse lands first.
+# Glance is iframed DIRECTLY from 127.0.0.1:8085 (own origin, off the gateway — review);
+# widget URLs below are fetched from INSIDE the bridge-mode container, so they may only
+# target the container itself (localhost:8080 = glance's own server). GPU telemetry lives
+# in the shell's status strip (same-origin /metrics/gpu via the gateway), not here.
 server:
-  base-url: /glance
+  assets-path: /app/assets
 
 theme:
   $include: themes/active.yml
@@ -12,19 +16,6 @@ pages:
     columns:
       - size: small
         widgets:
-          - type: custom-api
-            title: GPUs
-            url: http://127.0.0.1:8484/metrics/gpu
-            cache: 10s
-            template: |
-              {{ range .JSON.Array "gpus" }}
-              <div class="flex justify-between">
-                <span>GPU{{ .Int "index" }} {{ .String "pstate" }}</span>
-                <span>{{ .String "util" }}% · dec {{ .String "dec" }}% ·
-                      {{ .String "mem_used" }}/{{ .String "mem_total" }} MiB ·
-                      {{ .String "temp" }}°C · {{ .String "power" }} W</span>
-              </div>
-              {{ end }}
           - type: server-stats
             servers:
               - type: local
@@ -48,7 +39,7 @@ pages:
             hour-format: 24h
           - type: custom-api
             title: Mode
-            url: http://127.0.0.1:8085/assets/state/mode.json
+            url: http://localhost:8080/assets/state/mode.json   # glance's own server
             cache: 10s
             template: |
               <div>persona: <b>{{ .JSON.String "mode" }}</b></div>

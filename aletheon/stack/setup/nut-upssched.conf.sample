@@ -1,0 +1,26 @@
+# NUT wiring for powerguard (DESIGN.md §3.5) — adapt into /etc/nut/ after `sudo make
+# install` (which creates the sudoers pins for the nut user).
+#
+# /etc/nut/upsmon.conf (excerpt):
+#   MONITOR cyberpower@localhost 1 upsmon <password> primary
+#   NOTIFYCMD /usr/sbin/upssched
+#   NOTIFYFLAG ONBATT  SYSLOG+EXEC
+#   NOTIFYFLAG ONLINE  SYSLOG+EXEC
+#   NOTIFYFLAG LOWBATT SYSLOG+EXEC
+#
+# /etc/nut/upssched.conf:
+#   CMDSCRIPT /etc/nut/upssched-cmd
+#   PIPEFN  /run/nut/upssched.pipe
+#   LOCKFN  /run/nut/upssched.lock
+#   AT ONBATT  * EXECUTE onbatt
+#   AT ONLINE  * EXECUTE online
+#   AT LOWBATT * EXECUTE lowbatt
+#
+# /etc/nut/upssched-cmd (root-owned, mode 755):
+#   #!/bin/sh
+#   case "$1" in
+#     onbatt|online|lowbatt) sudo /usr/local/sbin/powerguard-shed "$1" ;;
+#   esac
+#
+# Validate at phase 0 with the shed test: `upsmon -c fsd` dry-run alternatives aside, pull
+# the UPS input briefly under load and confirm `nvidia-smi -q -d POWER` shows the cap.

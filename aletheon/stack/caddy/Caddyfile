@@ -51,10 +51,10 @@ http://127.0.0.1:8080 {
 		file_server
 	}
 
-	# ── Glance (iframes cleanly; base-url /glance set in glance.yml) ─────────────
-	handle /glance* {
-		reverse_proxy 127.0.0.1:8085
-	}
+	# ── Glance is NOT proxied here (review): it renders third-party feed content, and
+	# same-origin with /claude + /token a single Glance XSS would reach the terminal
+	# credential injection and the watcherd token. The shell iframes it directly at its
+	# own loopback port (http://127.0.0.1:8085 — different origin, still same-site). ──
 
 	# ── state + persona assets ───────────────────────────────────────────────────
 	handle_path /state/* {

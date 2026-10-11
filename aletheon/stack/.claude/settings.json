@@ -1,22 +1,26 @@
 {
-  "_comment": "Guardrails, not a boundary (DESIGN.md §4.4): deny rules bind Edit/Write tools only — the enforced surface is the root-owned /usr/local installs. The hook feeds watcherd's debouncer (never a direct SSE emit).",
+  "_comment": "Guardrails, not a boundary (DESIGN.md §4.4): deny rules bind Edit/Write tools only — the enforced surface is the root-owned /usr/local installs. Patterns use the double-slash FILESYSTEM-ABSOLUTE form; a single leading slash anchors at the project dir and would match nothing here (review finding). Verify one rule live after install (ask Claude to touch bin/). The hook feeds watcherd's debouncer (never a direct SSE emit).",
   "permissions": {
     "deny": [
-      "Edit(/blazing/stack/bin/**)",
-      "Write(/blazing/stack/bin/**)",
-      "Edit(/blazing/stack/jobs/*/state.json)",
-      "Write(/blazing/stack/jobs/*/state.json)",
-      "Edit(/blazing/stack/.git/**)",
-      "Write(/blazing/stack/.git/**)",
-      "Edit(/blazing/stack/secrets/**)",
-      "Write(/blazing/stack/secrets/**)",
-      "Read(/blazing/stack/secrets/**)",
-      "Edit(/blazing/stack/.claude/settings.json)",
-      "Write(/blazing/stack/.claude/settings.json)",
-      "Edit(/blazing/stack/.mcp.json)",
-      "Write(/blazing/stack/.mcp.json)",
-      "Edit(/blazing/stack/systemd/**)",
-      "Write(/blazing/stack/systemd/**)"
+      "Edit(//blazing/stack/bin/**)",
+      "Write(//blazing/stack/bin/**)",
+      "Edit(//blazing/stack/jobs/*/state.json)",
+      "Write(//blazing/stack/jobs/*/state.json)",
+      "Edit(//blazing/stack/.git/**)",
+      "Write(//blazing/stack/.git/**)",
+      "Edit(//blazing/stack/secrets/**)",
+      "Write(//blazing/stack/secrets/**)",
+      "Read(//blazing/stack/secrets/**)",
+      "Edit(//blazing/stack/.claude/settings.json)",
+      "Write(//blazing/stack/.claude/settings.json)",
+      "Edit(//blazing/stack/.mcp.json)",
+      "Write(//blazing/stack/.mcp.json)",
+      "Edit(//blazing/stack/systemd/**)",
+      "Write(//blazing/stack/systemd/**)",
+      "Edit(//blazing/stack/sim/registry.json)",
+      "Write(//blazing/stack/sim/registry.json)",
+      "Edit(//blazing/stack/sim/templates/**)",
+      "Write(//blazing/stack/sim/templates/**)"
     ]
   },
   "hooks": {

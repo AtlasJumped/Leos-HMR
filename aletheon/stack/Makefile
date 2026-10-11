@@ -24,8 +24,13 @@ install-bins:
 	install -m 755 -o root -g root bin/chrome-theme     $(PREFIX)/sbin/chrome-theme
 
 install-sudoers:
+	# nut's upssched runs as the nut user and must shed load as root (§3.5 — review);
+	# the leo pin covers the phase-0 shed test. Wire NUT: upssched.conf CMDSCRIPT =
+	# /usr/local/sbin/powerguard-shed via `sudo` (see setup/nut-upssched.conf.sample).
 	printf '%s\n' \
 	  '$(USER_NAME) ALL=(root) NOPASSWD: $(PREFIX)/sbin/chrome-theme' \
+	  '$(USER_NAME) ALL=(root) NOPASSWD: $(PREFIX)/sbin/powerguard-shed' \
+	  'nut ALL=(root) NOPASSWD: $(PREFIX)/sbin/powerguard-shed' \
 	  > $(SUDOERS).tmp
 	visudo -cf $(SUDOERS).tmp
 	install -m 440 -o root -g root $(SUDOERS).tmp $(SUDOERS)

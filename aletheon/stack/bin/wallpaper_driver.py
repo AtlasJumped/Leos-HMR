@@ -23,9 +23,12 @@ PAUSE = {"full": 3, "low": 0}
 
 def screens():
     """state/screens.json maps logical names to geometry origins, e.g.
-    {"dp3": {"x": 0, "y": 1440}, "dp1": {"x": 3440, "y": 1440}, "dp2": {"x": 1699, "y": 0}}"""
+    {"dp3": {"x": 0, "y": 1440}, ...}. Underscore keys (_comment) and non-geometry values
+    are stripped so len(screens()) is the real output count."""
     with open(os.path.join(STACK, "state", "screens.json")) as f:
-        return json.load(f)
+        raw = json.load(f)
+    return {k: v for k, v in raw.items()
+            if not k.startswith("_") and isinstance(v, dict) and "x" in v and "y" in v}
 
 
 def _evaluate(script):
@@ -109,8 +112,19 @@ def plasmashell_active():
     return r.stdout.strip() == "active"
 
 
-def outputs_up(expected=3):
+def outputs_up(expected=None):
     """Refuse wallpaper writes while outputs are down (fx away) — geometry matching
-    would target the wrong containments (§5)."""
+    would target the wrong containments (§5). Prefers kscreen-doctor JSON; the text
+    fallback must NOT count the substring 'enabled' (which 'disabled' contains)."""
+    if expected is None:
+        expected = len(screens())
+    r = subprocess.run(["kscreen-doctor", "-j"], capture_output=True, text=True)
+    if r.returncode == 0:
+        try:
+            outs = json.loads(r.stdout).get("outputs", [])
+            return sum(1 for o in outs if o.get("enabled")) >= expected
+        except ValueError:
+            pass
     r = subprocess.run(["kscreen-doctor", "-o"], capture_output=True, text=True)
-    return r.stdout.count("enabled") >= expected
+    import re
+    return len(re.findall(r"(?<!dis)\benabled\b", r.stdout)) >= expected

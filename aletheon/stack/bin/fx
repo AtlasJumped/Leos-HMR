@@ -77,7 +77,7 @@ def main():
         return
     st["level"] = arg
     write(st)
-    if wp.outputs_up(expected=3):
+    if wp.outputs_up():
         reapply_mode()  # modectl picks fps/pause/static from fx.json
     print(f"fx: {arg}")
 

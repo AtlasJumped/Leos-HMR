@@ -14,7 +14,7 @@ contracts. Binaries (videos/stills/weights) live in ZFS datasets (`/blazing/mode
 |---|---|
 | Shell layout/views | edit `state/layout.json` (SSE reloads the shell) |
 | Panel routing / reload actions / TTS rules | edit `state/watch-map.json` / `state/events.json` |
-| Dashboard content/theme | edit `glance/glance.yml` / mode's `glance-theme.yml` |
+| Dashboard content/theme | edit `glance/glance.yml` / mode's `glance-theme.yml` (Glance is iframed from its OWN port 8085, off the gateway origin — its widgets may only fetch `localhost:8080` = itself) |
 | Persona (whole-system look) | `bin/modectl apply <name>`; new persona = new `modes/<name>/` satisfying the 8-point manifest (`bin/modectl validate`) |
 | Background video intensity | `bin/fx full|low|paused|away|back` |
 | Gateway routes | edit `caddy/Caddyfile` (watch-map reload rule runs `caddy reload`; overhaul validate runs `caddy validate`) |
@@ -26,8 +26,9 @@ contracts. Binaries (videos/stills/weights) live in ZFS datasets (`/blazing/mode
 
 ## Hard rules for sessions here
 - Never edit `bin/`, `systemd/`, `jobs/*/state.json`, `.claude/settings.json`, `.mcp.json`,
-  `secrets/` (deny-listed; the enforced copies live root-owned in /usr/local — changes there
-  go through Leo running `sudo make install`).
+  `secrets/`, `sim/registry.json`, `sim/templates/` (deny-listed; the sim registry and
+  templates ARE the §10 enforcement gate — new sims go through Leo's review; the enforced
+  binary copies live root-owned in /usr/local via `sudo make install`).
 - Never touch the Immich volume stanza or `/mnt/photos` mapping (contract invariant).
 - Secrets only via `${VAR}` / env_file references; gitleaks gates every commit.
 - All of this assumes a Wayland session; if `XDG_SESSION_TYPE != wayland`, stop and say so.

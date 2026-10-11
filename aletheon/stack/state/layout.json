@@ -5,8 +5,8 @@
     "default": {
       "areas": "\"machine machine claude me\" \"world world claude me\"",
       "panels": [
-        { "id": "glance",  "title": "glance",  "src": "/glance/",            "area": "machine" },
-        { "id": "world",   "title": "world",   "src": "/glance/",            "area": "world" },
+        { "id": "glance",  "title": "glance",  "src": "http://127.0.0.1:8085/", "area": "machine" },
+        { "id": "world",   "title": "world",   "src": "http://127.0.0.1:8085/", "area": "world" },
         { "id": "claude",  "title": "claude",  "src": "/claude/",            "area": "claude" },
         { "id": "photos",  "title": "photos",  "src": "http://127.0.0.1:2283", "area": "me" }
       ]

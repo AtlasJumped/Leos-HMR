@@ -2,11 +2,13 @@
   "id": "example-001",
   "intent": "swap the glance theme and shell persona css for mode 'noir'",
   "preserve": ["/tank/photos*", "jobs/*", ".claude/settings.json", ".mcp.json",
-               "secrets/*", "bin/*", "systemd/*", "docker-compose.yml"],
+               "secrets/*", "bin/*", "systemd/*", "docker-compose.yml",
+               "sim/registry.json", "sim/templates/*"],
   "checkpoint": { "zfs": ["blazing/stack"], "git": true },
   "validate": [
     ["jq", "-e", ".", "jobs/example-001/artifacts/mode.json"],
-    ["caddy", "validate", "--config", "caddy/Caddyfile"]
+    ["docker", "compose", "-f", "/blazing/stack/docker-compose.yml", "exec", "-T",
+     "caddy", "caddy", "validate", "--config", "/etc/caddy/Caddyfile"]
   ],
   "activate": {
     "manifest": [

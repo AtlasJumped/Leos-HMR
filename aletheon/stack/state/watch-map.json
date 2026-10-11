@@ -4,7 +4,7 @@
     { "prefix": "glance/", "panel": "glance", "extra_delay": 1.0,
       "reload": [] },
     { "prefix": "caddy/Caddyfile", "panel": "shell", "sse_action": "none",
-      "reload": [["docker", "compose", "-f", "/blazing/stack/docker-compose.yml", "exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"]] },
+      "reload": [["docker", "compose", "--env-file", "/blazing/stack/secrets/compose.env", "-f", "/blazing/stack/docker-compose.yml", "exec", "-T", "caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"]] },
     { "prefix": "shell/persona.css", "panel": "shell-css",
       "reload": [] },
     { "prefix": "shell/", "panel": "shell",
@@ -20,6 +20,6 @@
     { "prefix": "modes/", "panel": "state",
       "reload": [] },
     { "prefix": "docker-compose.yml", "panel": "shell", "sse_action": "none",
-      "reload": [["docker", "compose", "-f", "/blazing/stack/docker-compose.yml", "up", "-d", "--remove-orphans"]] }
+      "reload": [["docker", "compose", "--env-file", "/blazing/stack/secrets/compose.env", "--profile", "core", "--profile", "photos", "-f", "/blazing/stack/docker-compose.yml", "up", "-d", "--remove-orphans"]] }
   ]
 }

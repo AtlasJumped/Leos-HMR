@@ -23,11 +23,18 @@ PAUSE_FLAG = os.path.join(JOBS, ".pause")
 
 
 def sh(cmd, cwd=STACK, check=True, capture=False):
-    """Run argv list (never a shell string) and return CompletedProcess."""
-    return subprocess.run(
-        cmd, cwd=cwd, check=check,
-        stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.STDOUT if capture else None, text=True)
+    """Run argv list (never a shell string) and return CompletedProcess. A missing binary
+    must surface as returncode 127, not a traceback — otherwise validate/probe crash past
+    the auto-rollback path (review finding)."""
+    try:
+        return subprocess.run(
+            cmd, cwd=cwd, check=check,
+            stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.STDOUT if capture else None, text=True)
+    except FileNotFoundError:
+        if check:
+            die(f"command not found: {cmd[0]}")
+        return subprocess.CompletedProcess(cmd, 127, stdout=f"{cmd[0]}: not found", stderr=None)
 
 
 def job_dir(jid):
@@ -111,12 +118,24 @@ def reload_actions_for(paths):
     return actions
 
 
+def norm_dst(dst):
+    """Normalize+confine a manifest destination (review finding: '../' and absolute dsts
+    bypassed the preserve check and could write outside the repo)."""
+    if os.path.isabs(dst):
+        die(f"manifest dst must be repo-relative, got absolute: {dst!r}")
+    dst_abs = os.path.realpath(os.path.join(STACK, dst))
+    if not dst_abs.startswith(os.path.realpath(STACK) + os.sep):
+        die(f"manifest dst escapes the stack: {dst!r}")
+    return dst_abs, os.path.relpath(dst_abs, os.path.realpath(STACK))
+
+
 def check_preserve(s):
     pats = s.get("preserve", [])
     for _, dst in s["activate"]["manifest"]:
+        _, rel = norm_dst(dst)
         for pat in pats:
-            if fnmatch.fnmatch(dst, pat) or fnmatch.fnmatch("/" + dst, pat):
-                die(f"spec touches preserved path {dst!r} (pattern {pat!r}); refusing")
+            if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch("/" + rel, pat):
+                die(f"spec touches preserved path {rel!r} (pattern {pat!r}); refusing")
 
 
 # ── phases ───────────────────────────────────────────────────────────────────
@@ -170,13 +189,15 @@ def do_activate(jid):
     save_state(jid, st)
     changed = []
     for src, dst in s["activate"]["manifest"]:
-        src_abs = os.path.join(job_dir(jid), src) if not os.path.isabs(src) else src
-        dst_abs = os.path.join(STACK, dst)
+        src_abs = os.path.realpath(os.path.join(job_dir(jid), src))
+        if not src_abs.startswith(os.path.realpath(job_dir(jid)) + os.sep):
+            die(f"manifest src must stay inside the job dir: {src!r}")
+        dst_abs, rel = norm_dst(dst)
         if not os.path.exists(src_abs):
             die(f"staged file missing: {src_abs}")
         os.makedirs(os.path.dirname(dst_abs), exist_ok=True)
         shutil.copy2(src_abs, dst_abs)
-        changed.append(dst)
+        changed.append(rel)
     sh(["git", "add", "-A"])
     r = sh(["git", "commit", "-m", f"overhaul {jid}: activate"], check=False, capture=True)
     if r.returncode == 0:
