@@ -2,8 +2,11 @@
 # shellcheck disable=SC2088  # "~/..." inside messages is display text, not a path
 # claude-readiness-check — READ-ONLY audit of Leo's workstation after an update.
 #
-# Changes nothing: no sudo, no installs, no file writes. Prints PASS / WARN / FAIL lines, each
-# problem with a suggested fix. Run it as your normal user from a desktop terminal (Konsole):
+# Changes nothing: no sudo, no installs, and it writes no files itself. It only reads system
+# state, plus two network checks: `gh auth status` (asks GitHub whether your login is valid) and
+# an SSH probe to github.com that shows which account your key belongs to (with host-key updates
+# off, so ~/.ssh/known_hosts is never touched). Prints PASS / WARN / FAIL lines, each problem
+# with a suggested fix. Run it as your normal user from a desktop terminal (Konsole):
 #
 #   bash claude-readiness-check.sh | tee ~/claude-readiness-report.txt
 #
@@ -29,7 +32,9 @@ section "System and updates"
 
 running=$(uname -r)
 newest=$(ls -1 /boot/vmlinuz-* 2>/dev/null | sed 's#^/boot/vmlinuz-##' | sort -V | tail -1)
-if [ -n "$newest" ] && [ "$newest" != "$running" ]; then
+if [ -z "$newest" ]; then
+  warn "no kernels found in /boot (is the bpool boot pool mounted?)" "sudo zpool import bpool; then check: mount | grep /boot"
+elif [ "$newest" != "$running" ]; then
   warn "running kernel $running, newest installed $newest" "reboot when no GPU job is running"
 else
   pass "running the newest installed kernel ($running)"
@@ -40,7 +45,7 @@ if [ -e /var/run/reboot-required ]; then
   warn "a reboot is pending (${pkgs:-packages updated})" "reboot, then re-run this check"
 fi
 
-lists_age=$(find /var/lib/apt/lists -maxdepth 1 -name '*Packages*' -printf '%T@\n' 2>/dev/null | sort -n | tail -1 | cut -d. -f1)
+lists_age=$(stat -c %Y /var/lib/apt/periodic/update-success-stamp 2>/dev/null || stat -c %Y /var/cache/apt/pkgcache.bin 2>/dev/null || true)
 if [ -z "$lists_age" ] || [ $(( now - lists_age )) -gt 86400 ]; then
   warn "package lists are more than a day old, so the upgrade count below may be stale" "sudo apt update"
 fi
@@ -125,10 +130,14 @@ if have zpool; then
       age=$(( (now - ts) / 86400 ))
       [ "$age" -gt 35 ] && warn "pool $p last scrubbed $age days ago" "sudo zpool scrub $p" \
                         || pass "pool $p scrubbed $age days ago"
-    elif printf '%s' "$line" | grep -q 'in progress'; then
-      info "pool $p: scrub in progress"
     else
-      warn "pool $p has no completed scrub on record" "sudo zpool scrub $p"
+      case "$line" in
+        *"scrub in progress"*)    info "pool $p: scrub in progress" ;;
+        *"resilver in progress"*) warn "pool $p is resilvering (rebuilding a disk)" "let it finish; zpool status $p shows progress" ;;
+        *"scrub paused"*)         warn "pool $p has a paused scrub" "sudo zpool scrub $p (resumes it)" ;;
+        *resilvered*)             info "pool $p: last scan was a resilver; no scrub since" ;;
+        *)                        warn "pool $p has no completed scrub on record" "sudo zpool scrub $p" ;;
+      esac
     fi
   done
   if have sanoid && systemctl is-active --quiet sanoid.timer 2>/dev/null; then
@@ -173,11 +182,11 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 section "Network exposure"
 if have ss; then
-  open=$(ss -H -tln 2>/dev/null | awk '{print $4}' | grep -vE '^(127\.|\[::1\]|::1)' | sort -u | tr '\n' ' ')
+  open=$(ss -H -tln 2>/dev/null | awk '{print $4}' | grep -vE '^(127\.|\[::1\]|::1|\[::ffff:127\.)' | sort -u | tr '\n' ' ')
   if [ -n "$open" ]; then
-    warn "ports reachable from your network: $open" "close or bind to 127.0.0.1 anything you don't need on the LAN (sshd is the usual exception)"
+    warn "TCP ports reachable from your network: $open" "close or bind to 127.0.0.1 anything you don't need on the LAN (sshd is the usual exception)"
   else
-    pass "nothing listens beyond localhost"
+    pass "no TCP port listens beyond localhost"
   fi
 else
   info "ss not available; listening ports not checked"
@@ -189,7 +198,12 @@ if have claude; then
   cpath=$(command -v claude)
   info "claude $(claude --version 2>/dev/null | head -1) at $cpath"
   npm_copy=no
-  have npm && npm ls -g --depth=0 @anthropic-ai/claude-code 2>/dev/null | grep -q claude-code && npm_copy=yes
+  if have npm && [ -d "$(dirname "$(dirname "$(command -v npm)")")/lib/node_modules/@anthropic-ai/claude-code" ]; then
+    npm_copy=yes
+  fi
+  for c in $(which -a claude 2>/dev/null); do
+    case "$(readlink -f "$c")" in *node_modules/@anthropic-ai/claude-code*) npm_copy=yes ;; esac
+  done
   if [ "$cpath" = "$HOME/.local/bin/claude" ]; then
     pass "Claude Code is the native install"
     [ "$npm_copy" = yes ] && warn "an old npm copy of Claude Code is also installed" "npm uninstall -g @anthropic-ai/claude-code"
@@ -207,8 +221,7 @@ if have claude; then
     warn "ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN is set in your shell — Claude Code bills that key instead of your subscription, and Remote Control refuses to start" \
          "remove it from ~/.bashrc / ~/.profile unless you meant to use an API key"
   fi
-  info "claude doctor (read-only diagnostics):"
-  timeout 60 claude doctor </dev/null 2>&1 | tail -25 | sed 's/^/        /'
+  info "also run 'claude doctor' yourself: it checks the install and settings and explains any warning"
 else
   fail "claude not found on PATH" "reinstall with the native installer from claude.com/claude-code"
 fi
@@ -286,7 +299,7 @@ if have node; then
 fi
 
 if have gh; then
-  gh auth status >/dev/null 2>&1 && pass "GitHub CLI logged in" \
+  GH_NO_UPDATE_NOTIFIER=1 gh auth status >/dev/null 2>&1 && pass "GitHub CLI logged in" \
                                  || warn "GitHub CLI is not logged in (or its token expired)" "gh auth login"
 else
   info "GitHub CLI (gh) not installed"
@@ -297,7 +310,7 @@ fi
 
 keys=$(ssh-add -l 2>/dev/null | awk '{$1=$2=""; print}' | sed 's/^  //' | tr '\n' ';')
 info "SSH keys loaded in the agent: ${keys:-none}"
-gh_ssh=$(timeout 15 ssh -o BatchMode=yes -o ConnectTimeout=5 -T git@github.com 2>&1 | grep -oE 'Hi [^!]+' | head -1)
+gh_ssh=$(timeout 15 ssh -o BatchMode=yes -o ConnectTimeout=5 -o UpdateHostKeys=no -o StrictHostKeyChecking=yes -T git@github.com 2>&1 | grep -oE 'Hi [^!]+' | head -1)
 info "GitHub over SSH: ${gh_ssh:-no key accepted (fine if you use HTTPS + gh)}"
 
 have bwrap && info "bubblewrap present (Claude Code's sandbox can use it)" \
