@@ -1,0 +1,46 @@
+{
+  "autoMode": {
+    "environment": [
+      "$defaults",
+      "Primary use: personal projects and hands-on system administration of this single-user Linux workstation (Ubuntu, KDE Plasma, 2x RTX 5090, ZFS pools rpool/bpool/blazing/scratch/tank, Docker); sudo is available, so mistakes change the real machine",
+      "Host containment: none — Claude Code runs directly on the owner's workstation, not in a container or VM",
+      "Sensitive data locations & audiences: /tank (family photo library and personal archive, including /tank/JUNK DRAWER), the iCloud photo library under /blazing, ~/.ssh, ~/.claude/.credentials.json and ~/.config/google-chrome hold personal data and credentials; their contents are for the owner only and must not enter any commit, gist, paste, upload or publish unless the owner names that exact destination"
+    ],
+    "soft_deny": [
+      "$defaults",
+      "Destroying, rolling back or relabeling ZFS pools, datasets or snapshots (zfs destroy, zfs rollback, zpool destroy, zpool labelclear) unless the owner named that exact pool, dataset or snapshot",
+      "Writing to raw block devices or formatting or repartitioning disks (dd to /dev/*, wipefs, mkfs, sgdisk, parted, fdisk)",
+      "Deleting or overwriting files under /tank or the iCloud photo library on /blazing",
+      "Copying files from /tank or the iCloud photo library to any destination outside this machine",
+      "Removing or purging kernel, NVIDIA driver, ZFS or KDE Plasma packages, or starting a distribution release upgrade (do-release-upgrade)"
+    ],
+    "hard_deny": [
+      "$defaults",
+      "Sending private SSH keys or the contents of ~/.claude/.credentials.json anywhere outside this machine"
+    ]
+  },
+  "permissions": {
+    "ask": [
+      "Bash(zfs destroy *)",
+      "Bash(sudo zfs destroy *)",
+      "Bash(zfs rollback *)",
+      "Bash(sudo zfs rollback *)",
+      "Bash(zpool destroy *)",
+      "Bash(sudo zpool destroy *)",
+      "Bash(zpool labelclear *)",
+      "Bash(sudo zpool labelclear *)",
+      "Bash(wipefs *)",
+      "Bash(sudo wipefs *)",
+      "Bash(sudo mkfs*)",
+      "Bash(sudo sgdisk *)",
+      "Bash(sudo parted *)",
+      "Bash(sudo fdisk *)",
+      "Bash(sudo dd *)",
+      "Bash(sudo do-release-upgrade*)"
+    ],
+    "deny": [
+      "Read(~/.claude/.credentials.json)",
+      "Read(~/.ssh/id_*)"
+    ]
+  }
+}

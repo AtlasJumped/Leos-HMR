@@ -199,6 +199,16 @@ if have claude; then
   else
     info "claude is not at ~/.local/bin/claude (native default); check this is the install you expect"
   fi
+  n_claude=$(which -a claude 2>/dev/null | sort -u | wc -l)
+  [ "$n_claude" -gt 1 ] && warn "$n_claude different claude executables on PATH: $(which -a claude | sort -u | tr '\n' ' ')" \
+                            "keep ~/.local/bin/claude; remove the others"
+  [ -d "$HOME/.claude/local" ] && warn "a legacy local install exists in ~/.claude/local" "rm -rf ~/.claude/local"
+  if env | grep -qE '^(ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN)='; then
+    warn "ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN is set in your shell — Claude Code bills that key instead of your subscription, and Remote Control refuses to start" \
+         "remove it from ~/.bashrc / ~/.profile unless you meant to use an API key"
+  fi
+  info "claude doctor (read-only diagnostics):"
+  timeout 60 claude doctor </dev/null 2>&1 | tail -25 | sed 's/^/        /'
 else
   fail "claude not found on PATH" "reinstall with the native installer from claude.com/claude-code"
 fi
@@ -209,6 +219,21 @@ if [ -f "$C/settings.json" ]; then
     jq -e . "$C/settings.json" >/dev/null 2>&1 \
       && pass "~/.claude/settings.json is valid JSON (keys: $(jq -r 'keys|join(", ")' "$C/settings.json"))" \
       || fail "~/.claude/settings.json is not valid JSON — Claude Code ignores it" "fix the syntax error (jq . ~/.claude/settings.json shows where)"
+    info "default permission mode: $(jq -r '.permissions.defaultMode // "not set (auto is the built-in default)"' "$C/settings.json" 2>/dev/null)"
+    if jq -e '.autoMode' "$C/settings.json" >/dev/null 2>&1; then
+      for k in environment allow soft_deny hard_deny; do
+        if jq -e --arg k "$k" '.autoMode[$k] | type == "array"' "$C/settings.json" >/dev/null 2>&1 \
+           && ! jq -e --arg k "$k" '.autoMode[$k] | index("$defaults")' "$C/settings.json" >/dev/null 2>&1; then
+          warn "autoMode.$k has no \"\$defaults\" entry, so Claude Code's built-in $k rules are switched off" \
+               "add \"\$defaults\" as the first item of autoMode.$k"
+        fi
+      done
+      pass "auto mode has custom rules (check them with: claude auto-mode config)"
+    else
+      info "no custom auto-mode rules yet (aletheon/tools/apply-claude-settings.sh adds the recommended ones)"
+    fi
+    jq -e '.env.ANTHROPIC_API_KEY // .apiKeyHelper' "$C/settings.json" >/dev/null 2>&1 \
+      && warn "settings.json sets an API key or apiKeyHelper — Remote Control needs a claude.ai login instead" "remove it unless intended"
   else
     info "~/.claude/settings.json exists (install jq to validate it)"
   fi
@@ -223,7 +248,13 @@ if [ -f "$C/.credentials.json" ]; then
 fi
 
 if [ -f "$C/CLAUDE.md" ]; then
-  info "~/.claude/CLAUDE.md: $(wc -l < "$C/CLAUDE.md") lines"
+  lines=$(wc -l < "$C/CLAUDE.md")
+  [ "$lines" -gt 200 ] && warn "~/.claude/CLAUDE.md is $lines lines (guidance: under about 200; it loads into every session)" \
+                              "move reference material into ~/Documents/TECH_STACK.md and import it" \
+                       || info "~/.claude/CLAUDE.md: $lines lines"
+  grep -qE '@~?/?.*TECH_STACK\.md' "$C/CLAUDE.md" \
+    && pass "CLAUDE.md imports TECH_STACK.md" \
+    || info "CLAUDE.md does not import TECH_STACK.md (add a line: @~/Documents/TECH_STACK.md)"
   grep -qiF "$(hostname)" "$C/CLAUDE.md" \
     && pass "CLAUDE.md names this machine ($(hostname))" \
     || warn "CLAUDE.md never mentions this machine's hostname ($(hostname)) — it may describe it under an old name" \
