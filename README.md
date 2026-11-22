@@ -1,5 +1,9 @@
 # **ChronoPhysics — The Coherence Ledger of Reality**
 
+This was my first attempt to share my ideas and 'timestamp' the HMR theory I have. Much of it is garbage AI  circa late 2025.
+I have continued to progress and I hope as I continue I will be able to come back here and find somethign of value.
+My mission is to elevatue humanity.
+
 ### **Abstract**
 ChronoPhysics interprets every physical law as a projection of one invariant:  
 ∇ₜ,ₓ,ᴱ Cohₜₒₜₐₗ = 0  
